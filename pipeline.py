@@ -1,3 +1,4 @@
+"""
 from transformers import AutoModelForSequenceClassification, AutoTokenizer, TrainingArguments, Trainer
 from datasets import load_dataset
 from evaluate import load
@@ -58,3 +59,4 @@ import torch.onnx
 
 dummy_input = torch.randint(0, 100, (1, 512))
 torch.onnx.export(model, dummy_input, "model.onnx")
+"""

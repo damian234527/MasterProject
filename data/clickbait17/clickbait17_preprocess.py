@@ -16,8 +16,10 @@ def data_load(json_path: str = None):
     df_instances = df_instances.applymap(clean_text)
     df_truth = pd.read_json(os.path.join(json_path, json_truth), lines=True)
     df_merged = pd.merge(df_instances, df_truth, on="id", how="inner")
-    df_merged = df_merged[["postText", "targetTitle", "targetDescription", "targetKeywords", "targetParagraphs", "truthMedian"]]
-    df_merged.to_csv("merged.csv", index=False, quoting=csv.QUOTE_ALL)
+    df_merged = df_merged[["postText", "targetTitle", "targetParagraphs", "truthMedian"]] # "targetDescription", "targetKeywords" had too many missing values
+    df_merged = df_merged.rename(columns={"postText": "post", "targetTitle": "header", "targetParagraphs": "content", "truthMedian": "clickbait_score"})
+
+    df_merged.to_csv("clickbait17_" + os.path.basename(os.path.normpath(json_path)) + ".csv", index=False, quoting=csv.QUOTE_ALL)
 
 def clean_text(val):
     if isinstance(val, list):
@@ -31,8 +33,7 @@ def clean_text(val):
     return val.strip()
 
 if __name__ == "__main__":
-    path_train = "train"
-    path_test = "test"
-    path_validation = "validation"
-    path = os.path.join(os.getcwd(), path_train)
-    data_load(path)
+    files = ["train", "validation", "test"]
+    for file in files:
+        path = os.path.join(os.getcwd(), file)
+        data_load(file)
