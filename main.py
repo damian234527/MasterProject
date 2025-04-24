@@ -5,6 +5,9 @@ import spacy
 import sys
 # import headline_classifier
 import headline_content_similarity
+import nltk
+from nltk.corpus import stopwords
+from nltk.sentiment import SentimentIntensityAnalyzer
 
 # Retrieval of article via URL
 # Extraction of article header and content
@@ -94,6 +97,15 @@ def main(urls: str | list[str] = None, comparison_methods: str | list[str] = "di
         detector.predict(headline, content, comparison_methods)
 
 if __name__ == "__main__":
+    try:
+        nltk.data.find("corpora/stopwords")
+    except nltk.downloader.DownloadError:
+        nltk.download("stopwords")
+    try:
+        nltk.data.find("sentiment/vader_lexicon.zip/vader_lexicon/vader_lexicon.txt")
+    except (nltk.downloader.DownloadError, LookupError):
+        nltk.download("vader_lexicon")
+
     debug = 1
     debug_links = ["https://www.buzzfeed.com/stephaniemcneal/a-couple-did-a-stunning-photo-shoot-with-their-baby-after-le"]
     if not debug:
