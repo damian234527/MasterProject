@@ -98,6 +98,7 @@ class Clickbait17FeatureAugmentedDataset(ClickbaitDataset):
         features = self._extract_features(post, headline, content)
 
         encoding = self.tokenizer(
+            post,
             headline,
             content,
             truncation=True,
@@ -120,6 +121,7 @@ class Clickbait17FeatureAugmentedDataset(ClickbaitDataset):
             post, headline, content, label = row["post"], row["headline"], row["content"], row["clickbait_score"]
             features = self._extract_features(post, headline, content)
             records.append({
+                "post": post,
                 "headline": headline,
                 "content": content,
                 "clickbait_score": label,

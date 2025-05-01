@@ -6,12 +6,14 @@ import re
 
 def dataset17_create_csv(json_path: str = None):
     if not json_path:
-        json_path = os.getcwd()
+        json_path = os.path.dirname(__file__)
+        print(json_path)
     json_instances = "instances.jsonl"
     json_truth = "truth.jsonl"
 
     path_instances = os.path.join(json_path, json_instances)
     path_truth = os.path.join(json_path, json_truth)
+    print(path_instances)
     df_instances = pd.read_json(path_instances, lines=True)
     df_instances = df_instances.applymap(clean_text)
     df_truth = pd.read_json(path_truth, lines=True)

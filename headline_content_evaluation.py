@@ -23,17 +23,20 @@ def evaluate_clickbait_predictions(y_true, y_pred, save_path: str = None, verbos
 
     y_true = np.array(y_true)
     y_pred = np.array(y_pred)
-    y_pred_binary = (y_pred >= 0.5).astype(int)
+
+    threshold = 0.5
+    y_true_binary = [1 if y >= threshold else 0 for y in y_true]
+    y_pred_binary = [1 if y >= threshold else 0 for y in y_pred]
 
     mse = mean_squared_error(y_true, y_pred)
     nmse = mse / np.var(y_true) if np.var(y_true) > 0 else float("inf")
-    f1 = f1_score(y_true, y_pred_binary)
-    precision = precision_score(y_true, y_pred_binary)
-    recall = recall_score(y_true, y_pred_binary)
-    accuracy = accuracy_score(y_true, y_pred_binary)
+    f1 = f1_score(y_true_binary, y_pred_binary)
+    precision = precision_score(y_true_binary, y_pred_binary)
+    recall = recall_score(y_true_binary, y_pred_binary)
+    accuracy = accuracy_score(y_true_binary, y_pred_binary)
 
     try:
-        roc_auc = roc_auc_score(y_true, y_pred)
+        roc_auc = roc_auc_score(y_true_binary, y_pred_binary)
     except ValueError:
         roc_auc = float("nan")
 

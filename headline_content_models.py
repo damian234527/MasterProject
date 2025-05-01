@@ -12,6 +12,7 @@ import string
 from torch import nn
 from data.clickbait17.clickbait17_dataset import Clickbait17Dataset, Clickbait17FeatureAugmentedDataset
 from headline_content_evaluation import evaluate_clickbait_predictions
+from config import HEADLINE_CONTENT_CONFIG
 
 class ClickbaitModelBase(ABC):
     """Abstract Base Class for Clickbait Detection Models."""
@@ -44,7 +45,7 @@ class ClickbaitModelBase(ABC):
         pass
 
     @abstractmethod
-    def predict(self, headline: str, content: str) -> float:
+    def predict(self, post: str, headline: str, content: str) -> float:
         """Predicts the clickbait score for a single headline and content pair."""
         pass
 
@@ -118,17 +119,17 @@ class ClickbaitModelBase(ABC):
 # ============================================
 class ClickbaitTransformer(ClickbaitModelBase):
     """Clickbait detection using a standard Transformer model (e.g., BERT)."""
-    # DEFAULT_BASE_MODEL = "bert-base-uncased" # Keep track of default base
-    DEFAULT_BASE_MODEL = "google/bert_uncased_L-4_H-256_A-4" # Smaller default example
-
+    model_name_default = os.getenv("MODEL_NAME", "bert-base-uncased") # Keep track of default base "google/bert_uncased_L-4_H-256_A-4" - smaller default example
     def __init__(self,
-                 # Changed model_name -> model_name_or_path
-                 model_name_or_path: str = DEFAULT_BASE_MODEL,
+                 model_name_or_path: str = model_name_default,
                  length_max: int = 512,
                  batch_size: int = 64,
                  epochs: int = 3,
+                 learning_rate = 2e-5,
+                 weight_decay = 0.01,
+                 dropout_rate = 0.3,
                  fp16: bool = True,
-                 output_directory: str = "TransformerOutput",
+                 output_directory: str = "models/standard",
                  **kwargs): # Allow passing extra args to from_pretrained
         """
         Initializes the standard Clickbait Transformer model.
@@ -171,12 +172,14 @@ class ClickbaitTransformer(ClickbaitModelBase):
              # Attempt to load tokenizer with default base if model fails? Or fail completely?
              # Let's try loading tokenizer from the base name for basic functionality
              try:
-                 self.tokenizer = AutoTokenizer.from_pretrained(self.DEFAULT_BASE_MODEL)
-                 print(f"Warning: Model loading failed, loaded tokenizer for {self.DEFAULT_BASE_MODEL}")
+                 self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_default)
+                 print(f"Warning: Model loading failed, loaded tokenizer for {self.model_name_default}")
              except Exception as te:
-                 print(f"Error loading default tokenizer {self.DEFAULT_BASE_MODEL}: {te}")
+                 print(f"Error loading default tokenizer {self.model_name_default}: {te}")
                  self.tokenizer = None # Give up on tokenizer too
-
+        self.learning_rate = learning_rate
+        self.weight_decay = weight_decay
+        self.dropout_rate = dropout_rate
         self.fp16 = fp16
         self.output_directory = f"{output_directory}_{self.model_identifier.replace("/", "_")}_{int(time.time())}"
         self.trainer = None
@@ -184,18 +187,18 @@ class ClickbaitTransformer(ClickbaitModelBase):
     def _load_data(self, csv_path: str) -> Dataset:
         """Loads data using Clickbait17Dataset."""
         try:
-            df = pd.read_csv(csv_path).dropna(subset=["headline", "content", "clickbait"])
+            df = pd.read_csv(csv_path).dropna(subset=["post", "headline", "content", "clickbait_score"])
             if df.empty:
                  print(f"Warning: No valid data after dropping NaNs in {csv_path}")
             return Clickbait17Dataset(df, self.tokenizer, self.length_max)
         except FileNotFoundError:
             print(f"Error: File not found at {csv_path}")
             # Return an empty dataset or raise an error
-            return Clickbait17Dataset(pd.DataFrame(columns=["headline", "content", "clickbait"]), self.tokenizer, self.length_max)
+            return Clickbait17Dataset(pd.DataFrame(columns=["post", "headline", "content", "clickbait_score"]), self.tokenizer, self.length_max)
         except Exception as e:
             print(f"Error loading data from {csv_path}: {e}")
             # Return an empty dataset or raise an error
-            return Clickbait17Dataset(pd.DataFrame(columns=["headline", "content", "clickbait"]), self.tokenizer, self.length_max)
+            return Clickbait17Dataset(pd.DataFrame(columns=["post", "headline", "content", "clickbait_score"]), self.tokenizer, self.length_max)
 
 
     def train(self, train_csv: str, validation_csv: str) -> None:
@@ -214,13 +217,14 @@ class ClickbaitTransformer(ClickbaitModelBase):
             per_device_train_batch_size=self.batch_size,
             per_device_eval_batch_size=self.batch_size,
             num_train_epochs=self.epochs,
-            weight_decay=0.01,
+            weight_decay=self.weight_decay,
+            learning_rate=self.learning_rate,
             fp16=self.fp16 and torch.cuda.is_available(), # Only enable fp16 if cuda is available
             logging_dir=os.path.join(self.output_directory, "logs"),
             load_best_model_at_end=True,
             metric_for_best_model="eval_loss", # Regression task, use loss
             greater_is_better=False, # Lower loss is better
-            report_to="none" # Disable external reporting like wandb if not needed
+            report_to="none" # external reporting like wandb disabled
         )
 
         self.trainer = Trainer(
@@ -244,7 +248,7 @@ class ClickbaitTransformer(ClickbaitModelBase):
         self.load_model(best_model_path)
 
 
-    def predict(self, headline: str, content: str) -> float:
+    def predict(self, post: str, headline: str, content: str) -> float:
         """Predicts the clickbait score for a single headline/content pair."""
         if self.model is None:
             raise ValueError("Model has not been loaded or trained yet.")
@@ -255,7 +259,7 @@ class ClickbaitTransformer(ClickbaitModelBase):
         # Combine headline and content, let tokenizer handle truncation/padding
         # Using text pair encoding
         inputs = self.tokenizer(
-            text=headline,
+            text=post,
             text_pair=content,
             return_tensors="pt",
             truncation="longest_first", # Truncate longest sequence first if needed
@@ -331,34 +335,33 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
             logits = self.regressor(x)
             return logits.squeeze(-1) # Squeeze the last dimension
 
-    # Fixed number of features expected by this implementation
-    NUM_FEATURES = 11
-    DEFAULT_BASE_MODEL = "google/bert_uncased_L-4_H-256_A-4" # Smaller default example
 
+    NUM_FEATURES = 14 # TODO
+    model_name_default = os.getenv("MODEL_NAME", "bert-base-uncased")
     def __init__(self,
-                 model_name: str = DEFAULT_BASE_MODEL, # Base transformer name
+                 model_name_or_path: str = model_name_default, # Base transformer name
                  length_max: int = 512,
                  batch_size: int = 32,
                  epochs: int = 5,
-                 lr: float = 2e-5,
+                 learning_rate: float = 2e-5,
                  dropout_rate: float = 0.3,
-                 output_dir: str = "HybridOutput"):
+                 output_directory: str = "models/hybrid"):
          # Use model_name for the base transformer in the hybrid model
-         super().__init__(model_name, length_max, batch_size, epochs)
-         self.lr = lr
-         self.output_dir = output_dir
-         os.makedirs(self.output_dir, exist_ok=True)
+         super().__init__(model_name_or_path, length_max, batch_size, epochs)
+         self.learning_rate = learning_rate
+         self.output_directory = output_directory
+         os.makedirs(self.output_directory, exist_ok=True)
 
          # Initialize the custom hybrid model using the specified base transformer name
          try:
-             print(f"Initializing HybridClickbaitModel with base transformer: {model_name}")
+             print(f"Initializing HybridClickbaitModel with base transformer: {model_name_or_path}")
              self.model = self.HybridClickbaitModel(
-                 transformer_name=model_name, # Use the base model name here
+                 transformer_name=model_name_or_path, # Use the base model name here
                  num_features=self.NUM_FEATURES,
                  dropout_rate=dropout_rate
              ).to(self.device) # Move model to device during initialization
          except OSError as e:
-             print(f"Error loading base transformer '{model_name}' for hybrid model: {e}")
+             print(f"Error loading base transformer '{model_name_or_path}' for hybrid model: {e}")
              self.model = None
 
     def _load_data(self, csv_path: str) -> Dataset:
@@ -369,10 +372,10 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
              return Clickbait17FeatureAugmentedDataset(df, self.tokenizer, self.length_max)
         except FileNotFoundError:
             print(f"Error: File not found at {csv_path}")
-            return Clickbait17FeatureAugmentedDataset(pd.DataFrame(columns=["headline", "content", "clickbait"]), self.tokenizer, self.length_max)
+            return Clickbait17FeatureAugmentedDataset(pd.DataFrame(columns=["post", "headline", "content", "clickbait_score"]), self.tokenizer, self.length_max)
         except Exception as e:
             print(f"Error loading data from {csv_path}: {e}")
-            return Clickbait17FeatureAugmentedDataset(pd.DataFrame(columns=["headline", "content", "clickbait"]), self.tokenizer, self.length_max)
+            return Clickbait17FeatureAugmentedDataset(pd.DataFrame(columns=["post", "headline", "content", "clickbait_score"]), self.tokenizer, self.length_max)
 
     def train(self, train_csv: str, validation_csv: str):
         """Trains the hybrid model using a custom PyTorch training loop."""
@@ -393,18 +396,18 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
         train_loader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=val_batch_size) # No shuffle for validation
 
-        optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.lr)
+        optimizer = torch.optim.AdamW(self.model.parameters(), learning_rate=self.learning_rate)
         loss_fn = nn.MSELoss() # Mean Squared Error for regression
 
         best_val_loss = float("inf")
-        model_save_path = os.path.join(self.output_dir, "best_model.pt")
+        model_save_path = os.path.join(self.output_directory, "best_model.pt")
 
         print(f"Starting training for {self.epochs} epochs on device {self.device}...")
 
         for epoch in range(self.epochs):
             self.model.train()
             total_train_loss = 0
-            for batch in train_loader:
+            for i, batch in enumerate(train_loader):
                 # Move batch items to device
                 input_ids = batch["input_ids"].to(self.device)
                 attention_mask = batch["attention_mask"].to(self.device)
@@ -418,6 +421,7 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
                 optimizer.step()
 
                 total_train_loss += loss.item()
+                print(f"Batch {i + 1}/{len(train_loader)} - Loss: {loss.item():.4f}")
 
             avg_train_loss = total_train_loss / len(train_loader)
 
@@ -450,7 +454,7 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
         self.load_model(model_save_path)
 
 
-    def predict(self, headline: str, content: str) -> float:
+    def predict(self, post: str, headline: str, content: str) -> float:
         """Predicts the clickbait score using the hybrid model."""
         if self.model is None:
             raise ValueError("Model has not been loaded or trained yet.")
@@ -460,7 +464,7 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
 
         # Need to create a temporary dataset/dataframe to run feature extraction
         # Include a dummy label (e.g., 0.0) as expected by the dataset
-        temp_data = pd.DataFrame([{"headline": headline, "content": content, "clickbait": 0.0}])
+        temp_data = pd.DataFrame([{"post": post, "headline": headline, "content": content, "clickbait_score": 0.0}])
         # Use the same dataset class used for training to ensure consistent feature extraction
         temp_dataset = Clickbait17FeatureAugmentedDataset(temp_data, self.tokenizer, self.length_max)
 
@@ -480,7 +484,7 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
 
         return output.item() # Output is already squeezed by the model's forward pass
 
-    def load_model(self, path: str = "HybridOutput/best_model.pt"):
+    def load_model(self, path: str = "models/hybrid/best_model.pt"):
         """Loads the trained model's state dictionary from a .pt file."""
         # This method remains the way to load trained weights for the hybrid model
         if self.model is None:

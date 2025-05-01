@@ -3,118 +3,130 @@ from bs4 import BeautifulSoup
 import joblib
 import spacy
 import sys
-# import headline_classifier
-import headline_content_similarity
 import nltk
+import pandas as pd
+from datetime import datetime
 from nltk.corpus import stopwords
-from nltk.sentiment import SentimentIntensityAnalyzer
+from headline_classifier import HeadlineClassifier
+from headline_content_similarity import (
+    CosineSimilarityTFIDF,
+    TransformerEmbeddingSimilarity,
+    ClickbaitModelScore,
+    HeadlineContentSimilarity
+)
 
-# Retrieval of article via URL
-# Extraction of article header and content
-# Tokenization
-# Deletion of special characters and stop words
-# Lemmatization or stemming
-# POS-tagging
+# Ensure necessary NLTK data is available
+try:
+    nltk.data.find("corpora/stopwords")
+except LookupError:
+    nltk.download("stopwords")
 
-class ArticleScrapper:
-    """Class for scraping and extracting the article"""
+# ================ Scraper ================
 
-    def __init__(self, url_article: str):
-        self.url = url_article
-        self.soup = self._fetchContent()
+class ArticleScraper:
+    def __init__(self, url: str):
+        self.url = url
+        self.soup = self._fetch_content()
 
-    def _fetchContent(self):
-        """Fetch the article content"""
+    def _fetch_content(self):
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(self.url, headers=headers)
         response.raise_for_status()
         return BeautifulSoup(response.text, "html.parser")
 
-    def getHeadline(self):
-        """Returns article headline (h1 tag from HTML)"""
-        if self.soup.find("h1"):
-            return self.soup.find("h1").text.strip()
-        # TODO what if there is no h1 tag
+    def get_headline(self) -> str:
+        headline_tag = self.soup.find("h1")
+        return headline_tag.text.strip() if headline_tag else ""
 
-    def getContent(self):
-        """Returns all paragraphs merged (p tags from HTML)"""
+    def get_content(self) -> str:
         paragraphs = self.soup.find_all("p")
-        return "".join(paragraph.text.strip() for paragraph in paragraphs if paragraph.text.strip())
+        return " ".join(p.text.strip() for p in paragraphs if p.text.strip())
 
-class ClickbaitDetector:
-    """Class analysing whether the article is clickbait or not based on the headline and content"""
+# ================ Detector ================
 
-    def __init__(self, model_path: str, vectorizer_path: str):
-        self.model = joblib.load(model_path)
-        self.vectorizer = joblib.load(vectorizer_path)
-        self.natural_language_processor = spacy.load("en_core_web_sm") # TODO change
+class ClickbaitAndSimilarityDetector:
+    def __init__(self, clickbait_model_path: str = "headline_model.joblib", model_type: str = "logistic"):
+        self.headline_classifier = HeadlineClassifier(model_path=clickbait_model_path, model_type=model_type)
+        self.headline_classifier.load_model()
+        self.spacy_nlp = spacy.load("en_core_web_sm")
 
-    def preprocess(self, text: str) -> str:
-        """Clean text for analysis"""
-        doc = self.natural_language_processor(text.lower()) #sequence of spaCy Token objects
-        return "".join([token.lemma_ for token in doc if token.is_alpha and not token.is_stop])
+    def preprocess_text(self, text: str) -> str:
+        doc = self.spacy_nlp(text.lower())
+        return " ".join(token.lemma_ for token in doc if token.is_alpha and not token.is_stop)
 
-    def predict(self, headline: str, content: str, comparison_methods: str | list[str] = "cosine") -> str:
-        """Predicts whether the article headline is consistent with its content"""
-        headline_preprocessed = headline
-        content_preprocessed = content
-        if isinstance(comparison_methods, str):
-            comparison_methods = [comparison_methods]
-        # headline_preprocessed = self.preprocess(headline)
-        # content_preprocessed = self.preprocess(content)
-        self.classifyHeadline(headline_preprocessed)
-        self.compare(headline_preprocessed, content_preprocessed, comparison_methods)
+    def detect_clickbait(self, headline: str) -> bool:
+        prediction = self.headline_classifier.predict([headline])[0]
+        return prediction
 
-    def classifyHeadline(self, headline: str):
-        headline_result = self.model.predict([headline])
-        print(f"Result of headline classification: {'CLICKBAIT' if headline_result else 'NOT CLICKBAIT'}")
-        return headline_result
+    def compare_similarity(self, headline: str, content: str) -> dict:
+        methods = {
+            "TF-IDF Cosine": CosineSimilarityTFIDF(),
+            "Transformer Embedding": TransformerEmbeddingSimilarity(),
+            "Clickbait Transformer Model": ClickbaitModelScore(model_type="transformer", model_name_or_path="bert-base-uncased") # ./models/transformer_bert-base-uncased_bert-base-uncased_1745798398/best_model
+        }
 
-    # TODO cosine similarity not working
-    def compare(self, headline: str, content: str, methods: list[str]):
-        comparator = headline_content_similarity.HeadlineContentSimilarity(method="cosine")
-        for method in methods:
-            if method == "cosine":
-                method = headline_content_similarity.CosineSimilarity()
-            else:
-                method = headline_content_similarity.TransformerSimilarity(method)
-
-            comparator.setMethod(method)
+        scores = {}
+        for method_name, method in methods.items():
+            comparator = HeadlineContentSimilarity(method)
             score = comparator.compare(headline, content)
-            print(f"Similarity score: {score:.4f}")
+            scores[method_name] = score
+            print(f"{method_name} Similarity Score: {score:.4f}")
+        return scores
 
-def main(urls: str | list[str] = None, comparison_methods: str | list[str] = "distilbert-base-uncased"):
-    detector = ClickbaitDetector('headline_model.joblib', 'vectorizer.pkl')  # TODO change the models
+# ================ Main Program ================
+
+def main(urls: list[str] | str, model_type: str = "logistic"):
     if isinstance(urls, str):
         urls = [urls]
-    for url in urls:
-        if not url:
-            url = input("Enter the URL of the article: ")
-        scrapper = ArticleScrapper(url)
-        headline = scrapper.getHeadline()
-        content = scrapper.getContent()
 
-        detector.predict(headline, content, comparison_methods)
+    detector = ClickbaitAndSimilarityDetector(model_type=model_type)
+    results = []
+
+    for url in urls:
+        print(f"\nProcessing URL: {url}\n{'-'*50}")
+        scraper = ArticleScraper(url)
+
+        headline = scraper.get_headline()
+        content = scraper.get_content()
+
+        if not headline or not content:
+            print("Error: Missing headline or content. Skipping this URL.")
+            continue
+
+        print(f"Headline: {headline}\n")
+        print(f"Content Snippet: {content[:300]}...\n")
+
+        is_clickbait = detector.detect_clickbait(headline)
+        print(f"Clickbait Detection Result: {'CLICKBAIT' if is_clickbait else 'NOT CLICKBAIT'}\n")
+
+        similarity_scores = detector.compare_similarity(headline, content)
+
+        result = {
+            "URL": url,
+            "Headline": headline,
+            "Clickbait": "Yes" if is_clickbait else "No",
+            **similarity_scores
+        }
+        results.append(result)
+
+    # Save results to timestamped CSV
+    if results:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"headline_analysis_results_{timestamp}.csv"
+        df = pd.DataFrame(results)
+        df.to_csv(filename, index=False)
+        print(f"\nAll results saved to '{filename}'.")
 
 if __name__ == "__main__":
-    try:
-        nltk.data.find("corpora/stopwords")
-    except nltk.downloader.DownloadError:
-        nltk.download("stopwords")
-    try:
-        nltk.data.find("sentiment/vader_lexicon.zip/vader_lexicon/vader_lexicon.txt")
-    except (nltk.downloader.DownloadError, LookupError):
-        nltk.download("vader_lexicon")
+    # Example usage
+    debug_urls = [
+        "https://www.buzzfeed.com/stephaniemcneal/a-couple-did-a-stunning-photo-shoot-with-their-baby-after-le",
+        # Add more URLs if needed
+    ]
 
-    debug = 1
-    debug_links = ["https://www.buzzfeed.com/stephaniemcneal/a-couple-did-a-stunning-photo-shoot-with-their-baby-after-le"]
-    if not debug:
-        main(sys.argv[1] if len(sys.argv) > 1 else None)
+    if len(sys.argv) > 2:
+        urls = sys.argv[1:-1]
+        model_type = sys.argv[-1]
+        main(urls, model_type)
     else:
-        main(debug_links)
-
-    # https://www.hindustantimes.com/india-news/cracks-in-trinamool-kalyan-banerjee-whatsapp-chat-leak-puts-spotlight-on-party-infighting-ahead-of-election-101744181659155.html
-    # https://www.dailymail.co.uk/news/article-14599119/Our-neighbour-hell-groomed-left-brink-suicide-ruined-lives.html
-
-    # Clickbaits
-    # https://www.buzzfeed.com/stephaniemcneal/a-couple-did-a-stunning-photo-shoot-with-their-baby-after-le
+        main(debug_urls, model_type="logistic")
