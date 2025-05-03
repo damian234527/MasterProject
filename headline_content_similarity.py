@@ -6,18 +6,17 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity as sk_cosine_similarity
 from transformers import AutoTokenizer, AutoModel
 from functools import lru_cache
-
+from config import GENERAL_CONFIG
 from headline_content_models import (
     ClickbaitModelBase,
     ClickbaitTransformer,
     ClickbaitFeatureEnhancedTransformer
 )
 
-# Set seeds and deterministic behavior
-SEED = 42
-np.random.seed(SEED)
-torch.manual_seed(SEED)
-torch.cuda.manual_seed_all(SEED)
+seed = GENERAL_CONFIG["seed"]
+np.random.seed(seed)
+torch.manual_seed(seed)
+torch.cuda.manual_seed_all(seed)
 torch.backends.cudnn.deterministic = True
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")

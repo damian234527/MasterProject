@@ -104,13 +104,11 @@ class ClickbaitModelBase(ABC):
             print("Warning: No data processed in test loop.")
             return float("nan"), []
 
-        mse = mean_squared_error(true_labels, predictions)
-        print(f"MSE for test set: {mse:.4f}")
+        # mse = mean_squared_error(true_labels, predictions)
+        # print(f"MSE for test set: {mse:.4f}")
 
-
-        metrics = evaluate_clickbait_predictions(true_labels, predictions, save_path="test_metrics.csv")
-        print(f"MSE old: {mse}")
-        print(f"New metrics: \n{metrics}")
+        path = f"./results/{os.path.basename(self.model_name)}"
+        metrics = evaluate_clickbait_predictions(true_labels, predictions, save_path=os.path.join(path, f"{self.model_name}_test_metrics.csv"))
         return metrics, predictions
 
 
@@ -119,17 +117,17 @@ class ClickbaitModelBase(ABC):
 # ============================================
 class ClickbaitTransformer(ClickbaitModelBase):
     """Clickbait detection using a standard Transformer model (e.g., BERT)."""
-    model_name_default = os.getenv("MODEL_NAME", "bert-base-uncased") # Keep track of default base "google/bert_uncased_L-4_H-256_A-4" - smaller default example
+    # model_name_default = os.getenv("MODEL_NAME", "bert-base-uncased") # Keep track of default base "google/bert_uncased_L-4_H-256_A-4" - smaller default example
     def __init__(self,
-                 model_name_or_path: str = model_name_default,
-                 length_max: int = 512,
-                 batch_size: int = 64,
-                 epochs: int = 3,
-                 learning_rate = 2e-5,
-                 weight_decay = 0.01,
-                 dropout_rate = 0.3,
-                 fp16: bool = True,
-                 output_directory: str = "models/standard",
+                 model_name_or_path: str = HEADLINE_CONTENT_CONFIG["model_name"],
+                 length_max: int = HEADLINE_CONTENT_CONFIG["length_max"],
+                 batch_size: int = HEADLINE_CONTENT_CONFIG["batch_size"],
+                 epochs: int = HEADLINE_CONTENT_CONFIG["epochs"],
+                 learning_rate = HEADLINE_CONTENT_CONFIG["learning_rate"],
+                 weight_decay = HEADLINE_CONTENT_CONFIG["weight_decay"],
+                 dropout_rate = HEADLINE_CONTENT_CONFIG["dropout_rate"],
+                 fp16: bool = HEADLINE_CONTENT_CONFIG["fp16"],
+                 output_directory: str = os.path.join(HEADLINE_CONTENT_CONFIG["output_directory"], "standard"),
                  **kwargs): # Allow passing extra args to from_pretrained
         """
         Initializes the standard Clickbait Transformer model.
@@ -149,7 +147,7 @@ class ClickbaitTransformer(ClickbaitModelBase):
         # The actual model loaded depends on model_name_or_path
         super().__init__(model_name=model_name_or_path, length_max=length_max, batch_size=batch_size, epochs=epochs)
         self.model_identifier = model_name_or_path # Store the identifier used
-
+        self.test_run = kwargs.pop("test_run", False)
         try:
             print(f"Loading AutoModelForSequenceClassification from: {model_name_or_path}")
             # Initialize the specific model for sequence classification
@@ -211,9 +209,9 @@ class ClickbaitTransformer(ClickbaitModelBase):
             return
 
         training_args = TrainingArguments(
-            output_dir=self.output_directory,
-            evaluation_strategy="epoch",
-            save_strategy="epoch",
+            output_dir=None if self.test_run else self.output_directory,
+            evaluation_strategy="no" if self.test_run else "epoch",
+            save_strategy="no" if self.test_run else "epoch",
             per_device_train_batch_size=self.batch_size,
             per_device_eval_batch_size=self.batch_size,
             num_train_epochs=self.epochs,
@@ -224,7 +222,7 @@ class ClickbaitTransformer(ClickbaitModelBase):
             load_best_model_at_end=True,
             metric_for_best_model="eval_loss", # Regression task, use loss
             greater_is_better=False, # Lower loss is better
-            report_to="none" # external reporting like wandb disabled
+            report_to="none", # external reporting like wandb disabled
         )
 
         self.trainer = Trainer(
@@ -239,13 +237,14 @@ class ClickbaitTransformer(ClickbaitModelBase):
         self.trainer.train()
         print("Training finished.")
 
-        # Save the best model and tokenizer
-        best_model_path = os.path.join(self.output_directory, "best_model")
-        self.trainer.save_model(best_model_path)
-        self.tokenizer.save_pretrained(best_model_path)
-        print(f"Best model saved to {best_model_path}")
-        # Load the best model into self.model
-        self.load_model(best_model_path)
+        # Save the best model and tokenizer if not test run
+        if not self.test_run:
+            best_model_path = os.path.join(self.output_directory, "best_model")
+            self.trainer.save_model(best_model_path)
+            self.tokenizer.save_pretrained(best_model_path)
+            print(f"Best model saved to {best_model_path}")
+            # Load the best model into self.model
+            self.load_model(best_model_path)
 
 
     def predict(self, post: str, headline: str, content: str) -> float:
@@ -337,21 +336,22 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
 
 
     NUM_FEATURES = 14 # TODO
-    model_name_default = os.getenv("MODEL_NAME", "bert-base-uncased")
+    # model_name_default = os.getenv("MODEL_NAME", "bert-base-uncased")
     def __init__(self,
-                 model_name_or_path: str = model_name_default, # Base transformer name
-                 length_max: int = 512,
-                 batch_size: int = 32,
-                 epochs: int = 5,
-                 learning_rate: float = 2e-5,
-                 dropout_rate: float = 0.3,
-                 output_directory: str = "models/hybrid"):
+                 model_name_or_path: str = HEADLINE_CONTENT_CONFIG["model_name"],   # Base transformer name
+                 length_max: int = HEADLINE_CONTENT_CONFIG["length_max"],
+                 batch_size: int = HEADLINE_CONTENT_CONFIG["batch_size"],
+                 epochs: int = HEADLINE_CONTENT_CONFIG["epochs"],
+                 learning_rate: float = HEADLINE_CONTENT_CONFIG["learning_rate"],
+                 dropout_rate: float = HEADLINE_CONTENT_CONFIG["dropout_rate"],
+                 output_directory: str = os.path.join(HEADLINE_CONTENT_CONFIG["output_directory"], "hybrid"),
+                 **kwargs):
          # Use model_name for the base transformer in the hybrid model
          super().__init__(model_name_or_path, length_max, batch_size, epochs)
+         self.test_run = kwargs.pop("test_run", False)
          self.learning_rate = learning_rate
          self.output_directory = output_directory
          os.makedirs(self.output_directory, exist_ok=True)
-
          # Initialize the custom hybrid model using the specified base transformer name
          try:
              print(f"Initializing HybridClickbaitModel with base transformer: {model_name_or_path}")
@@ -363,6 +363,7 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
          except OSError as e:
              print(f"Error loading base transformer '{model_name_or_path}' for hybrid model: {e}")
              self.model = None
+
 
     def _load_data(self, csv_path: str) -> Dataset:
         """Loads data using Clickbait17FeatureAugmentedDataset."""
@@ -396,7 +397,7 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
         train_loader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=val_batch_size) # No shuffle for validation
 
-        optimizer = torch.optim.AdamW(self.model.parameters(), learning_rate=self.learning_rate)
+        optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.learning_rate)
         loss_fn = nn.MSELoss() # Mean Squared Error for regression
 
         best_val_loss = float("inf")
@@ -446,8 +447,9 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
             # Save the model if validation loss improved
             if avg_val_loss < best_val_loss:
                 best_val_loss = avg_val_loss
-                torch.save(self.model.state_dict(), model_save_path)
-                print(f"Validation loss improved. Model saved to {model_save_path}")
+                if not self.test_run:
+                    torch.save(self.model.state_dict(), model_save_path)
+                    print(f"Validation loss improved. Model saved to {model_save_path}")
 
         print("Training finished.")
         # Load the best model state dict after training

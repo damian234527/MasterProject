@@ -58,7 +58,7 @@ def evaluate_clickbait_predictions(y_true, y_pred, save_path: str = None, verbos
             print(f"{k}: {v:.4f}")
 
     if save_path:
-        pd.DataFrame([metrics]).to_csv(save_path, index=False)
+        pd.DataFrame([metrics]).to_csv(save_path, mode="a", index=False)
         print(f"Metrics saved to {save_path}")
 
     return metrics
