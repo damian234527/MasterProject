@@ -6,6 +6,7 @@ import sys
 import nltk
 import pandas as pd
 from datetime import datetime
+from transformers import AutoTokenizer
 from nltk.corpus import stopwords
 from headline_classifier import HeadlineClassifier
 from headline_content_similarity import (
@@ -123,6 +124,7 @@ if __name__ == "__main__":
         "https://www.buzzfeed.com/stephaniemcneal/a-couple-did-a-stunning-photo-shoot-with-their-baby-after-le",
         # Add more URLs if needed
     ]
+
 
     if len(sys.argv) > 2:
         urls = sys.argv[1:-1]

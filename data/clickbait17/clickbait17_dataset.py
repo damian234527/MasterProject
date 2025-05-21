@@ -6,12 +6,27 @@ from typing import List
 import nltk
 import string
 import re
+import os
+import json
+import numpy as np
+from pathlib import Path
 from nltk.corpus import stopwords
 from nltk.sentiment import SentimentIntensityAnalyzer
 
-nltk.download("stopwords")
-nltk.download("vader_lexicon")
+# nltk.download("stopwords")
+# nltk.download("vader_lexicon")
 
+def build_clickbait_regex(path):
+    """Return compiled regex based on external lexicon file."""
+    if not os.path.isfile(path):
+        raise FileNotFoundError(path)
+    with open(path, encoding="utf-8") as f:
+        terms = [re.escape(line.strip()) for line in f if line.strip()]
+    pattern = r"\b(?:%s)\b" % "|".join(terms)
+    return re.compile(pattern, re.IGNORECASE)
+
+clickbait_phrases_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "clickbait_phrases.txt")
+clickbait_regex = build_clickbait_regex(clickbait_phrases_path)
 
 class ClickbaitDataset(Dataset):
     def __init__(self, dataframe: pd.DataFrame, tokenizer: PreTrainedTokenizer, length_max: int = 512):
@@ -29,9 +44,8 @@ class Clickbait17Dataset(ClickbaitDataset):
         post, headline, content, label = row["post"], row["headline"], row["content"], row["clickbait_score"]
 
         encoding = self.tokenizer(
-            post,
-            headline,
-            content,
+            text=post,
+            text_pair=content,
             truncation=True,
             padding="max_length",
             max_length=self.length_max,
@@ -50,8 +64,11 @@ class Clickbait17FeatureAugmentedDataset(ClickbaitDataset):
         super().__init__(dataframe, tokenizer, length_max)
         self.stop_words = set(stopwords.words("english"))
         self.sentiment_analyzer = SentimentIntensityAnalyzer()
+        features_number = 14
+        self.feature_means = torch.zeros(features_number)
+        self.feature_stds = torch.ones(features_number)
 
-    def _extract_features(self, post: str, headline: str, content: str) -> List[float]:
+    def _extract_features(self, post: str, headline: str, content: str, normalise: bool = False) -> List[float]:
         post_words = post.split()
         headline_words = headline.split()
         content_words = content.split()
@@ -67,14 +84,14 @@ class Clickbait17FeatureAugmentedDataset(ClickbaitDataset):
         exclamation_count = post.count("!")
         question_mark_count = post.count("?")
         uppercase_ratio_post = sum(c.isupper() for c in post) / max(len(post), 1)
-        stopword_ratio_post = sum(w.lower() in self.stop_words for w in post_words) / max(headline_length_words, 1)
-        clickbait_word_count = len(re.findall(r"\b(shocking|unbelievable|you won't believe|top \d+|must see)\b", post.lower())) # TODO
+        stopword_ratio_post = sum(w.lower() in self.stop_words for w in post_words) / max(post_length_words, 1)
+        clickbait_word_count = len(clickbait_regex.findall(post.lower())) # TODO add more to regex phrases
         sentiment_diff = abs(
             self.sentiment_analyzer.polarity_scores(post)["compound"] -
             self.sentiment_analyzer.polarity_scores(content)["compound"]
         )
 
-        return [
+        features = [
             post_length_words,
             post_length_chars,
             headline_length_words,
@@ -88,19 +105,27 @@ class Clickbait17FeatureAugmentedDataset(ClickbaitDataset):
             uppercase_ratio_post,
             stopword_ratio_post,
             clickbait_word_count,
-            sentiment_diff
-        ]
+            sentiment_diff]
+
+        if normalise:
+            features = torch.tensor(features, dtype=torch.float)
+            features_normalised = (features - self.feature_means) / self.feature_stds
+            return features_normalised
+        return features
 
     def __getitem__(self, idx):
         row = self.data.iloc[idx]
         post, headline, content, label = row["post"], row["headline"], row["content"], row["clickbait_score"]
 
-        features = self._extract_features(post, headline, content)
+        features = self._extract_features(post, headline, content, normalise=True)
+
+        ## TODO temporary, Compute mean and std across training set, store them, and normalize in _extract_features using those values
+        # features = torch.tensor(features, dtype=torch.float)
+        # features = (features - features.mean()) / (features.std() + 1e-6)
 
         encoding = self.tokenizer(
-            post,
-            headline,
-            content,
+            text=post,
+            text_pair=content,
             truncation=True,
             padding="max_length",
             max_length=self.length_max,
@@ -119,7 +144,7 @@ class Clickbait17FeatureAugmentedDataset(ClickbaitDataset):
         for i in range(len(self.data)):
             row = self.data.iloc[i]
             post, headline, content, label = row["post"], row["headline"], row["content"], row["clickbait_score"]
-            features = self._extract_features(post, headline, content)
+            features = self._extract_features(post, headline, content, normalise=False)
             records.append({
                 "post": post,
                 "headline": headline,
@@ -130,8 +155,15 @@ class Clickbait17FeatureAugmentedDataset(ClickbaitDataset):
 
         df_with_features = pd.DataFrame(records)
         df_with_features.to_csv(path, index=False)
+        return df_with_features
 
     @classmethod
     def from_feature_csv(cls, csv_path: str, tokenizer: PreTrainedTokenizer, length_max: int = 512):
         df = pd.read_csv(csv_path)
-        return cls(df, tokenizer, length_max)
+        with open(csv_path.replace(".csv", "_metadata.json")) as metadata_file:
+            meta = json.load(metadata_file)
+        obj = cls(df, tokenizer, length_max)
+        obj.feature_means = torch.tensor(meta["features_mean"], dtype=torch.float)
+        obj.feature_stds  = torch.tensor(meta["features_std"],  dtype=torch.float)
+        return obj
+        # return cls(df, tokenizer, length_max)

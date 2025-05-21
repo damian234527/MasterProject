@@ -4,25 +4,67 @@ import gc
 import torch
 from sklearn.model_selection import KFold
 import pandas as pd
+import random
+import numpy as np
 from headline_content_models import ClickbaitTransformer, ClickbaitFeatureEnhancedTransformer
+from data.clickbait17.clickbait17_prepare import prepare_clickbait17_datasets
 from config import GENERAL_CONFIG, HEADLINE_CONTENT_CONFIG, DATASETS_CONFIG
 import json
+from typing import Optional
 
 pruner = optuna.pruners.MedianPruner(n_warmup_steps=1)
 seed = GENERAL_CONFIG["seed"]
 RESULTS_DIR = "optimization_results"
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
-def train_and_evaluate(model_class, trial, train_csv, val_csv=None, test_run=False):
+def set_seed(s: int) -> None:
+    random.seed(s)
+    np.random.seed(s)
+    torch.manual_seed(s)
+    torch.cuda.manual_seed_all(s)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+def dataset_check(tokenizer_name: str):
+    """Checks and ensures datasets for given tokenizer exists.
+    Returns path to the directory with datasets
+    """
+    dataset_main = os.path.join("data", DATASETS_CONFIG["dataset_headline_content_name"])
+    dataset_directory = os.path.join(dataset_main, "models", tokenizer_name.replace("/", "_"))
+    filename_train = f"{DATASETS_CONFIG['dataset_headline_content_name']}_{DATASETS_CONFIG['train_suffix']}.csv"
+    csv_path = os.path.join(dataset_directory, filename_train)
+    if not os.path.exists(csv_path):
+        prepare_clickbait17_datasets(base_path=dataset_main, tokenizer_name=tokenizer_name)
+    return dataset_directory
+
+
+def train_and_evaluate(
+        model_class: str,
+        trial,
+        train_csv: str,
+        val_csv: str = None,
+        test_run: bool = False,
+        model_name: str = None,
+        tokenizer_name: str = None,
+        folds_number: int = 5):
+
+    seed_trial = seed + trial.number
+    set_seed(seed_trial)
+
     trial_params = {
         "learning_rate": trial.suggest_float("learning_rate", 1e-6, 5e-5, log=True),
         "dropout_rate": trial.suggest_float("dropout_rate", 0.1, 0.5),
+        "weight_decay": trial.suggest_float("weight_decay", 0, 0.3)
     }
 
     config = HEADLINE_CONTENT_CONFIG.copy()
     config.update(trial_params)
     if test_run:
         config["output_directory"] = "test"
+    if model_name:
+        config["model_name"] = model_name
+    if tokenizer_name:
+        config["tokenizer_name"] = tokenizer_name
 
     model_class_ref = {
         "standard": ClickbaitTransformer,
@@ -33,6 +75,7 @@ def train_and_evaluate(model_class, trial, train_csv, val_csv=None, test_run=Fal
 
     kwargs = dict(
         model_name_or_path=config["model_name"],
+        tokenizer_name = config["tokenizer_name"],
         length_max=config["length_max"],
         batch_size=config["batch_size"],
         epochs=config["epochs"],
@@ -43,84 +86,102 @@ def train_and_evaluate(model_class, trial, train_csv, val_csv=None, test_run=Fal
         test_run=test_run
     )
 
+    model_subfolder = f"{model_class}_{config['model_name']}"
+    os.makedirs(os.path.join(RESULTS_DIR, model_subfolder), exist_ok=True)
     if val_csv is None:
         df = pd.read_csv(train_csv).dropna()
         # if test_run:
-            # df = df.sample(frac=0.3, random_state=seed)
-        kf = KFold(n_splits=5, shuffle=True, random_state=seed)
-        losses = []
-        for train_index, val_index in kf.split(df):
+            # df = df.sample(frac=0.3, random_state=seed_trial)
+        kf = KFold(n_splits=folds_number, shuffle=True, random_state=seed_trial)
+        fold_losses: list[float] = []
+        fold_metrics: list[dict[str, float]] = []
+
+        for fold, (train_index, val_index) in enumerate(kf.split(df), start=1):
             train_df = df.iloc[train_index]
             val_df = df.iloc[val_index]
-            train_path = "temp_train.csv"
-            val_path = "temp_val.csv"
+            train_path = "temp/train.csv"
+            val_path = "temp/validation.csv"
             train_df.to_csv(train_path, index=False)
             val_df.to_csv(val_path, index=False)
 
             model = model_class_ref(**kwargs)
             model.train(train_path, val_path)
-            try:
-                metrics, _ = model.test(val_path)
-                nmse = metrics.get("NMSE", float("inf"))
-            except Exception:
-                nmse = float("inf")
-            losses.append(nmse)
+            metrics, _ = model.test(val_path)
+            nmse = metrics.get("NMSE", float("inf"))
+
+            fold_losses.append(nmse)
+            fold_metrics.append({"fold": fold, **{k: float(v) for k, v in metrics.items()}})
 
             del model
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-        final_nmse = sum(losses) / len(losses)
-        final_metrics = {"NMSE": final_nmse}
+        df_folds = pd.DataFrame(fold_metrics)
+        df_mean = df_folds.mean(numeric_only=True).to_dict()
+        nmse_final = df_mean["NMSE"]
+        metrics_final = df_mean
+
+        df_mean_row = {"fold": "mean", **metrics_final}
+        df_out = pd.concat([df_folds, pd.DataFrame([df_mean_row])], ignore_index=True)
+
+        folds_file = os.path.join(
+            RESULTS_DIR, f"{model_subfolder}_fold_metrics.csv"
+        )
+        header_needed = not os.path.exists(folds_file)
+        df_out.to_csv(folds_file, mode="a", header=header_needed, index=False)
+
     else:
         model = model_class_ref(**kwargs)
         model.train(train_csv, val_csv)
-        try:
-            metrics, _ = model.test(val_csv)
-            final_metrics = {k: float(v) for k, v in metrics.items()}
-        except Exception:
-            final_metrics = {"NMSE": float("inf")}
+        metrics, _ = model.test(val_csv)
+        metrics_final = {k: float(v) for k, v in metrics.items()}
+        nmse_final = metrics_final["NMSE"]
 
         del model
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    result = {
-        "model_class": model_class,
-        "trial_number": trial.number,
-        "params": trial_params,
-        "metrics": {k: float(v) for k, v in final_metrics.items()}
-    }
-
     suffix = "_test" if test_run else ""
-    result_file = os.path.join("optimization_results", f"{model_class}_{config["model_name"]}{suffix}.json")
-    with open(result_file, "a+") as f:
-        json.dump(result, f, indent=2)
+    result_file = os.path.join(RESULTS_DIR, f"{model_subfolder}{suffix}.csv")
 
-    return final_metrics.get("NMSE", float("inf"))
+    df_result = pd.DataFrame([{
+        "trial_number": trial.number,
+        **trial_params,
+        **metrics_final
+    }])
+    if not os.path.exists(result_file):
+        df_result.to_csv(result_file, index=False)
+    else:
+        df_result.to_csv(result_file, mode="a", header=False, index=False)
+
+    return nmse_final
 
 
-def create_objective_standard(train_csv, validation_csv=None, test=False):
+def create_objective_standard(train_csv: str, validation_csv: Optional[str] = None, test: bool = False, model_name: str = None, tokenizer_name: str = None):
     def objective_standard(trial):
         return train_and_evaluate(
             "standard",
             trial,
             train_csv,
             validation_csv,
-            test_run=test
+            test_run=test,
+            model_name=model_name,
+            tokenizer_name=tokenizer_name
         )
     return objective_standard
 
-def create_objective_hybrid(train_csv, validation_csv=None, test=False):
+def create_objective_hybrid(train_csv: str, validation_csv: Optional[str] = None, test: bool = False, model_name: str = None, tokenizer_name: str = None):
     def objective_hybrid(trial):
         return train_and_evaluate(
             "hybrid",
             trial,
             train_csv,
             validation_csv,
-            test_run=test
+            test_run=test,
+            model_name=model_name,
+            tokenizer_name=tokenizer_name
         )
     return objective_hybrid
 
@@ -128,15 +189,23 @@ if __name__ == "__main__":
     test = True
     hybrid = False
 
-    path_basic = os.path.join("data", DATASETS_CONFIG["dataset_headline_content_name"], "models", HEADLINE_CONTENT_CONFIG["model_name"])
+    model_name = "sentence-transformers/all-MiniLM-L6-v2"
+    tokenizer_name = "sentence-transformers/all-MiniLM-L6-v2"
+    if model_name == "" or model_name is None:
+        model_name = HEADLINE_CONTENT_CONFIG["model_name"]
+    if tokenizer_name == "" or tokenizer_name is None:
+        tokenizer_name = HEADLINE_CONTENT_CONFIG["tokenizer_name"]
+
+    path_basic = dataset_check(tokenizer_name)
+    # path_basic = os.path.join("data", DATASETS_CONFIG["dataset_headline_content_name"], "models", model_name)
     filename_train = f"{DATASETS_CONFIG["dataset_headline_content_name"]}_{DATASETS_CONFIG["train_suffix"]}"
     filename_validation = f"{DATASETS_CONFIG["dataset_headline_content_name"]}_{DATASETS_CONFIG["validation_suffix"]}"
-
+    filename_used = filename_train
     if not hybrid:
         study_standard = optuna.create_study(direction="minimize", sampler=optuna.samplers.TPESampler(), pruner=pruner)
-        study_standard.optimize(create_objective_standard(train_csv=os.path.join(path_basic, f"{filename_validation}.csv"), test=test), n_trials=2)
+        study_standard.optimize(create_objective_standard(train_csv=os.path.join(path_basic, f"{filename_used}.csv"), test=test, model_name=model_name, tokenizer_name=tokenizer_name), n_trials=2)
         print("Best standard transformer params:", study_standard.best_trial.params)
     else:
         study_hybrid = optuna.create_study(direction="minimize", sampler=optuna.samplers.TPESampler(), pruner=pruner)
-        study_hybrid.optimize(create_objective_hybrid(train_csv=os.path.join(path_basic, f"{filename_validation}_{DATASETS_CONFIG["features_suffix"]}.csv"), test=test), n_trials=2)
+        study_hybrid.optimize(create_objective_hybrid(train_csv=os.path.join(path_basic, f"{filename_used}_{DATASETS_CONFIG["features_suffix"]}.csv"), test=test, model_name=model_name, tokenizer_name=tokenizer_name), n_trials=2)
         print("Best hybrid transformer params:", study_hybrid.best_trial.params)

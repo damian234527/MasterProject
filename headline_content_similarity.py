@@ -6,7 +6,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity as sk_cosine_similarity
 from transformers import AutoTokenizer, AutoModel
 from functools import lru_cache
-from config import GENERAL_CONFIG
+from config import GENERAL_CONFIG, HEADLINE_CONTENT_CONFIG
 from headline_content_models import (
     ClickbaitModelBase,
     ClickbaitTransformer,
@@ -49,9 +49,8 @@ class CosineSimilarityTFIDF(SimilarityMethod):
             return 0.0
 
 class TransformerEmbeddingSimilarity(SimilarityMethod):
-    DEFAULT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
-    def __init__(self, model_name: str = DEFAULT_MODEL, max_length: int = 512):
+    def __init__(self, model_name: str = HEADLINE_CONTENT_CONFIG["model_name"], max_length: int = 512):
         self.model_name = model_name
         self.max_length = max_length
         self.tokenizer = None

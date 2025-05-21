@@ -5,12 +5,15 @@ from transformers import AutoTokenizer
 from data.clickbait17.clickbait17_preprocess import dataset17_create_csv
 from data.clickbait17.clickbait17_dataset import Clickbait17FeatureAugmentedDataset
 from config import DATASETS_CONFIG, HEADLINE_CONTENT_CONFIG
+from typing import Dict
 
-def save_metadata(csv_path: str, tokenizer_name: str):
+def save_metadata(csv_path: str, tokenizer_name: str, extra: Dict = None):
     metadata = {
         "tokenizer_name": tokenizer_name,
         "created": datetime.now().isoformat()
     }
+    if extra:
+        metadata.update(extra)
     json_path = csv_path.replace(".csv", "_metadata.json")
     with open(json_path, "w") as f:
         json.dump(metadata, f)
@@ -55,13 +58,16 @@ def prepare_clickbait17_datasets(base_path: str = None, tokenizer_name: str = No
             print(f"Basic CSV for {subset} already exists and matches tokenizer. Skipping.")
 
         # Step 2: Feature-augmented CSV
-        feature_csv_filename = os.path.join(dataset_folder, f"{DATASETS_CONFIG["dataset_headline_content_name"]}}_{subset}_{DATASETS_CONFIG["features_suffix"]}}.csv")
+        feature_csv_filename = os.path.join(dataset_folder, f"{DATASETS_CONFIG["dataset_headline_content_name"]}_{subset}_{DATASETS_CONFIG["features_suffix"]}.csv")
         if not metadata_matches(feature_csv_filename, tokenizer_name):
             print(f"Creating feature-augmented CSV for {subset}...")
             df = dataset17_create_csv(subset_path)
             dataset = Clickbait17FeatureAugmentedDataset(df, tokenizer)
-            dataset.save_with_features(feature_csv_filename)
-            save_metadata(feature_csv_filename, tokenizer_name)
+            df_features = dataset.save_with_features(feature_csv_filename)
+            feature_column = [column for column in df_features.columns if column.startswith("f")]
+            mean = df_features[feature_column].mean().tolist()
+            std = df_features[feature_column].std(ddof=0).tolist()
+            save_metadata(feature_csv_filename, tokenizer_name, {"features_mean": mean, "features_std": std})
         else:
             print(f"Feature-augmented CSV for {subset} already exists and matches tokenizer. Skipping.")
 
