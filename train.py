@@ -8,6 +8,7 @@ from headline_content_models import (
 )
 from data.clickbait17.clickbait17_prepare import prepare_clickbait17_datasets
 from data.clickbait17.clickbait17_utils import get_basic_csv_paths, get_feature_csv_paths
+from config import HEADLINE_CONTENT_CONFIG
 
 # ================ Headline Classifier Training ================
 
@@ -26,7 +27,7 @@ def train_headline_classifiers(data_path: str = "data/headline_clickbait.csv"):
 
 # ================ Headline-Content Models Training ================
 
-def train_headline_content_models(tokenizer_name: str = "bert-base-uncased"):
+def train_headline_content_models(tokenizer_name: str = HEADLINE_CONTENT_CONFIG["tokenizer_name"]):
     print("\n--- Training Headline-Content Models ---")
 
     # Ensure datasets are prepared

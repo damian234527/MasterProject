@@ -32,11 +32,13 @@ DATASETS_CONFIG = {
 
 HEADLINE_CONTENT_MODELS_PRETRAINED = [
     "bert-base-uncased",
+    "google/bert_uncased_L-2_H-128_A-2",
     "roberta-base",
-    "microsoft/deberta-v3-small" # dobre
+    "microsoft/deberta-v3-small", # dobre
     "sentence-transformers/all-MiniLM-L6-v2", # takie sobie ale szybkie
-    "khalidalt/DeBERTa-v3-large-mnli", # dużo VRAMu, trzeba batch size do 8 zmniejszyć i czekać 6 godzin
-    "Longformer-base-4096",
+    # "khalidalt/DeBERTa-v3-large-mnli", # dużo VRAMu, trzeba batch size do 8 zmniejszyć i czekać 6 godzin
+    "distilroberta-base",
+    "allenai/longformer-base-4096",
     # TODO add sentence transformer
 ]
 

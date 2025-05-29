@@ -1,3 +1,5 @@
+import os.path
+
 import numpy as np
 import torch
 from abc import ABC, abstractmethod
@@ -12,6 +14,7 @@ from headline_content_models import (
     ClickbaitTransformer,
     ClickbaitFeatureEnhancedTransformer
 )
+from data.clickbait17.clickbait17_utils import get_dataset_folder
 
 seed = GENERAL_CONFIG["seed"]
 np.random.seed(seed)
@@ -89,7 +92,7 @@ class TransformerEmbeddingSimilarity(SimilarityMethod):
 
 class ClickbaitModelScore(SimilarityMethod):
     CLICKBAIT_MODEL_CLASSES: Dict[str, Type[ClickbaitModelBase]] = {
-        "transformer": ClickbaitTransformer,
+        "standard": ClickbaitTransformer,
         "hybrid": ClickbaitFeatureEnhancedTransformer,
     }
 
@@ -136,5 +139,27 @@ class HeadlineContentSimilarity:
 # ============================================
 
 if __name__ == "__main__":
-    tets = ClickbaitModelScore(model_type="transformer", model_name_or_path="./models/transformer_bert-base-uncased_bert-base-uncased_1745798398/best_model")
-    print(tets.model.test("./data/clickbait17/models/bert-base-uncased/clickbait17_test.csv"))
+    transformers = ["sentence-transformers/all-MiniLM-L6-v2"]
+    # tets = ClickbaitModelScore(model_type="standard", model_name_or_path="./models/transformer_bert-base-uncased_bert-base-uncased_1745798398/best_model")
+    # print(tets.model.test("./data/clickbait17/models/bert-base-uncased/clickbait17_test.csv"))
+    for transformer in transformers:
+        directory = get_dataset_folder(transformer)
+        # standard = ClickbaitModelScore(model_type="standard", model_name_or_path="./models/standard_sentence-transformers_all-MiniLM-L6-v2_1748375172/best_model")
+        hybrid = ClickbaitModelScore(model_type="hybrid", model_name_or_path=transformer)
+        hybrid.model.load_model("./models/hybrid/best_model")
+        # --------------------------------------------
+        # UNTRAINED
+        #print("UNTRAINED")
+        #print("STANDARD: ")
+        #standard.model.test(os.path.join(directory, "clickbait17_test.csv"))
+        #print("HYBRID: ")
+        #hybrid.model.test(os.path.join(directory, "clickbait17_test_features.csv"))
+        # --------------------------------------------
+        # TRAINED
+        #standard.model.train(os.path.join(directory, "clickbait17_train.csv"), os.path.join(directory, "clickbait17_validation.csv"))
+        #standard.model.test(os.path.join(directory, "clickbait17_test.csv"))
+        # hybrid.model.train(os.path.join(directory, "clickbait17_train_features.csv"), os.path.join(directory, "clickbait17_validation_features.csv"))
+
+        # standard.model.test(os.path.join(directory, "clickbait17_test.csv"))
+        print("HYBRID")
+        hybrid.model.test(os.path.join(directory, "clickbait17_test_features.csv"))

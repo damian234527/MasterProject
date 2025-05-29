@@ -20,6 +20,8 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
     roc_auc_score,
+    average_precision_score,
+    precision_recall_curve,
     confusion_matrix,
 )
 
@@ -79,10 +81,8 @@ def evaluate_clickbait_predictions(
     precision = precision_score(y_true_bin, y_pred_bin, zero_division=0)
     recall = recall_score(y_true_bin, y_pred_bin, zero_division=0)
     accuracy = accuracy_score(y_true_bin, y_pred_bin)
-    try:
-        roc_auc = roc_auc_score(y_true_bin, y_pred)
-    except ValueError:
-        roc_auc = float("nan")
+    roc_auc = roc_auc_score(y_true_bin, y_pred)
+    pr_auc = average_precision_score(y_true_bin, y_pred)
 
     runtime = time.perf_counter() - start
 
@@ -94,7 +94,8 @@ def evaluate_clickbait_predictions(
         "Recall": recall,
         "Accuracy": accuracy,
         "ROC-AUC": roc_auc,
-        "Runtime_s": runtime,
+        "PR-AUC": pr_auc,
+        "Runtime, s": runtime,
     }
 
     if save_path:

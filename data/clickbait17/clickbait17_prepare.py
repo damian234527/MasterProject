@@ -4,6 +4,7 @@ from datetime import datetime
 from transformers import AutoTokenizer
 from data.clickbait17.clickbait17_preprocess import dataset17_create_csv
 from data.clickbait17.clickbait17_dataset import Clickbait17FeatureAugmentedDataset
+from data.clickbait17.clickbait17_utils import get_dataset_folder
 from config import DATASETS_CONFIG, HEADLINE_CONTENT_CONFIG
 from typing import Dict
 
@@ -41,7 +42,7 @@ def prepare_clickbait17_datasets(base_path: str = None, tokenizer_name: str = No
         #tokenizer_name = os.getenv("TOKENIZER_NAME", "bert-base-uncased")
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
 
-    dataset_folder = os.path.join(os.path.dirname(__file__), "models", tokenizer_name.replace("/", "_"))
+    dataset_folder = get_dataset_folder(tokenizer_name)
     os.makedirs(dataset_folder, exist_ok=True)
 
     for subset in subsets:
@@ -73,6 +74,17 @@ def prepare_clickbait17_datasets(base_path: str = None, tokenizer_name: str = No
 
     print(f"\nDataset preparation complete. Stored in '{dataset_folder}'.")
 
+def dataset_check(tokenizer_name: str) -> str:
+    """Checks and ensures datasets for given tokenizer exists.
+    Returns path to the directory with datasets
+    """
+    dataset_main = os.path.join("data", DATASETS_CONFIG["dataset_headline_content_name"])
+    dataset_directory = os.path.join(dataset_main, "models", dataset_check(tokenizer_name))
+    filename_train = f"{DATASETS_CONFIG['dataset_headline_content_name']}_{DATASETS_CONFIG['train_suffix']}.csv"
+    csv_path = os.path.join(dataset_directory, filename_train)
+    if not os.path.exists(csv_path):
+        prepare_clickbait17_datasets(base_path=dataset_main, tokenizer_name=tokenizer_name)
+    return dataset_directory
 
 if __name__ == "__main__":
     prepare_clickbait17_datasets()

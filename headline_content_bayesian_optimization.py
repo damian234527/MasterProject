@@ -2,14 +2,13 @@ import os
 import optuna
 import gc
 import torch
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, StratifiedKFold
 import pandas as pd
 import random
 import numpy as np
 from headline_content_models import ClickbaitTransformer, ClickbaitFeatureEnhancedTransformer
-from data.clickbait17.clickbait17_prepare import prepare_clickbait17_datasets
+from data.clickbait17.clickbait17_prepare import dataset_check
 from config import GENERAL_CONFIG, HEADLINE_CONTENT_CONFIG, DATASETS_CONFIG
-import json
 from typing import Optional
 
 pruner = optuna.pruners.MedianPruner(n_warmup_steps=1)
@@ -24,19 +23,6 @@ def set_seed(s: int) -> None:
     torch.cuda.manual_seed_all(s)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-
-def dataset_check(tokenizer_name: str):
-    """Checks and ensures datasets for given tokenizer exists.
-    Returns path to the directory with datasets
-    """
-    dataset_main = os.path.join("data", DATASETS_CONFIG["dataset_headline_content_name"])
-    dataset_directory = os.path.join(dataset_main, "models", tokenizer_name.replace("/", "_"))
-    filename_train = f"{DATASETS_CONFIG['dataset_headline_content_name']}_{DATASETS_CONFIG['train_suffix']}.csv"
-    csv_path = os.path.join(dataset_directory, filename_train)
-    if not os.path.exists(csv_path):
-        prepare_clickbait17_datasets(base_path=dataset_main, tokenizer_name=tokenizer_name)
-    return dataset_directory
-
 
 def train_and_evaluate(
         model_class: str,
@@ -92,11 +78,20 @@ def train_and_evaluate(
         df = pd.read_csv(train_csv).dropna()
         # if test_run:
             # df = df.sample(frac=0.3, random_state=seed_trial)
-        kf = KFold(n_splits=folds_number, shuffle=True, random_state=seed_trial)
+
+        bins = pd.qcut(df['clickbait_score'], q=2, labels=False, duplicates='drop')
+        if bins.nunique() > 1 and all(bins.value_counts() >= folds_number):
+            kf = StratifiedKFold(n_splits=folds_number, shuffle=True, random_state=seed_trial)
+            split_generator = kf.split(df, bins)
+        else:
+            print("Insufficient samples for stratification, using KFold")
+            kf = KFold(n_splits=folds_number, shuffle=True, random_state=seed_trial)
+            split_generator = kf.split(df)
+
         fold_losses: list[float] = []
         fold_metrics: list[dict[str, float]] = []
 
-        for fold, (train_index, val_index) in enumerate(kf.split(df), start=1):
+        for fold, (train_index, val_index) in enumerate(split_generator, start=1):
             train_df = df.iloc[train_index]
             val_df = df.iloc[val_index]
             train_path = "temp/train.csv"
@@ -119,7 +114,7 @@ def train_and_evaluate(
 
         df_folds = pd.DataFrame(fold_metrics)
         df_mean = df_folds.mean(numeric_only=True).to_dict()
-        nmse_final = df_mean["NMSE"]
+        objective = 1 - df_mean["PR-AUC"]
         metrics_final = df_mean
 
         df_mean_row = {"fold": "mean", **metrics_final}
@@ -136,7 +131,7 @@ def train_and_evaluate(
         model.train(train_csv, val_csv)
         metrics, _ = model.test(val_csv)
         metrics_final = {k: float(v) for k, v in metrics.items()}
-        nmse_final = metrics_final["NMSE"]
+        objective = 1 - metrics_final["PR-AUC"]
 
         del model
         gc.collect()
@@ -156,7 +151,7 @@ def train_and_evaluate(
     else:
         df_result.to_csv(result_file, mode="a", header=False, index=False)
 
-    return nmse_final
+    return objective
 
 
 def create_objective_standard(train_csv: str, validation_csv: Optional[str] = None, test: bool = False, model_name: str = None, tokenizer_name: str = None):
@@ -195,6 +190,9 @@ if __name__ == "__main__":
         model_name = HEADLINE_CONTENT_CONFIG["model_name"]
     if tokenizer_name == "" or tokenizer_name is None:
         tokenizer_name = HEADLINE_CONTENT_CONFIG["tokenizer_name"]
+
+    trials_standard = 25
+    trials_initial = 1
 
     path_basic = dataset_check(tokenizer_name)
     # path_basic = os.path.join("data", DATASETS_CONFIG["dataset_headline_content_name"], "models", model_name)
