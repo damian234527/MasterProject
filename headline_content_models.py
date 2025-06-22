@@ -12,7 +12,9 @@ import string
 from torch import nn
 from data.clickbait17.clickbait17_dataset import Clickbait17Dataset, Clickbait17FeatureAugmentedDataset
 from headline_content_evaluation import evaluate_clickbait_predictions
-from config import HEADLINE_CONTENT_CONFIG
+from config import HEADLINE_CONTENT_CONFIG, GENERAL_CONFIG
+from resampling import apply_sampling
+from loss_functions import WeightedLossTrainer, calculate_class_weights
 
 class ClickbaitModelBase(ABC):
     """Abstract Base Class for Clickbait Detection Models."""
@@ -37,6 +39,7 @@ class ClickbaitModelBase(ABC):
         self.epochs = epochs
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = None # To be initialized by subclasses
+        self.seed = GENERAL_CONFIG["seed"]
 
     @abstractmethod
     def _load_data(self, csv_path: str) -> Dataset:
@@ -123,7 +126,7 @@ class ClickbaitTransformer(ClickbaitModelBase):
     # model_name_default = os.getenv("MODEL_NAME", "bert-base-uncased") # Keep track of default base "google/bert_uncased_L-4_H-256_A-4" - smaller default example
     def __init__(self,
                  model_name_or_path: str = HEADLINE_CONTENT_CONFIG["model_name"],
-                 tokenizer_name: str = HEADLINE_CONTENT_CONFIG["tokenizer_name"],
+                 tokenizer_name: str = None,
                  length_max: int = HEADLINE_CONTENT_CONFIG["length_max"],
                  batch_size: int = HEADLINE_CONTENT_CONFIG["batch_size"],
                  epochs: int = HEADLINE_CONTENT_CONFIG["epochs"],
@@ -149,6 +152,7 @@ class ClickbaitTransformer(ClickbaitModelBase):
         """
         # Pass base class relevant args - model_name is used for tokenizer only here
         # The actual model loaded depends on model_name_or_path
+        tokenizer_name = tokenizer_name if tokenizer_name is not None else model_name_or_path
         super().__init__(model_name=model_name_or_path, tokenizer_name=tokenizer_name, length_max=length_max, batch_size=batch_size, epochs=epochs)
         self.model_identifier = model_name_or_path # Store the identifier used
         self.test_run = kwargs.pop("test_run", False)
@@ -199,36 +203,72 @@ class ClickbaitTransformer(ClickbaitModelBase):
         self.output_directory = f"{output_directory}_{self.model_identifier.replace("/", "_")}_{int(time.time())}"
         self.trainer = None
 
-    def _load_data(self, csv_path: str) -> Dataset:
-        """Loads data using Clickbait17Dataset."""
+    def _load_data(self, data: Union[str, pd.DataFrame]) -> Dataset:
+        """Loads data from a CSV file or DataFrame."""
         try:
-            df = pd.read_csv(csv_path).dropna(subset=["post", "headline", "content", "clickbait_score"])
+            if isinstance(data, str):
+                df = pd.read_csv(data).dropna(subset=["content", "clickbait_score"])
+            else:
+                df = data  # When a DataFrame
+
             if df.empty:
-                 print(f"Warning: No valid data after dropping NaNs in {csv_path}")
+                 print(f"Warning: No valid data after dropping NaNs in {data}")
             return Clickbait17Dataset(df, self.tokenizer, self.length_max)
         except FileNotFoundError:
-            print(f"Error: File not found at {csv_path}")
+            print(f"Error: File not found at {data}")
             # Return an empty dataset or raise an error
             return Clickbait17Dataset(pd.DataFrame(columns=["post", "headline", "content", "clickbait_score"]), self.tokenizer, self.length_max)
         except Exception as e:
-            print(f"Error loading data from {csv_path}: {e}")
+            print(f"Error loading data from {data}: {e}")
             # Return an empty dataset or raise an error
             return Clickbait17Dataset(pd.DataFrame(columns=["post", "headline", "content", "clickbait_score"]), self.tokenizer, self.length_max)
 
 
-    def train(self, train_csv: str, validation_csv: str) -> None:
-        """Trains the model using the Hugging Face Trainer API."""
-        data_train = self._load_data(train_csv)
-        data_validation = self._load_data(validation_csv)
+    def train(self, train_csv: str, validation_csv: str = None, sampling_strategy: str = None, use_weighted_loss: bool = False) -> None:
+        """
+        Trains the model using the Hugging Face Trainer API.
 
-        if len(data_train) == 0 or len(data_validation) == 0:
-            print("Error: Training or validation dataset is empty. Aborting training.")
+        Args:
+            train_csv (str): Path to the training data.
+            validation_csv (str, optional): Path to the validation data. Defaults to None.
+            sampling_strategy (str, optional): Strategy for resampling data ('oversample' or 'undersample'). Defaults to None.
+            use_weighted_loss (bool, optional): Whether to use a weighted loss function. Defaults to False.
+        """
+        # Loading and optional resample of training data
+        try:
+            df_train = pd.read_csv(train_csv).dropna(subset=["content", "clickbait_score"])
+            # Apply sampling if a strategy is specified
+            df_train = apply_sampling(df_train, sampling_strategy, self.seed)
+        except FileNotFoundError:
+            print(f"Error: Training file not found at {train_csv}")
             return
 
+        data_train = self._load_data(df_train)
+        data_validation = self._load_data(validation_csv) if validation_csv else None
+
+        if len(data_train) == 0 :
+            print("Error: Training dataset is empty. Aborting training.")
+            return
+
+        # Optional weights for Trainer
+        trainer_class = Trainer
+        trainer_kwargs = {}
+
+        if use_weighted_loss:
+            # Calculate weights from the *original* training file
+            class_weights = calculate_class_weights(train_csv)
+            if class_weights:
+                # If weights are available, switch to our custom trainer
+                # and prepare its unique argument.
+                trainer_class = WeightedLossTrainer
+                trainer_kwargs['class_weights'] = class_weights
+
+
+        # Definition of training arguments and initialisation of trainer
         training_args = TrainingArguments(
             output_dir="temp/model/standard/" if self.test_run else self.output_directory,
-            evaluation_strategy="no" if self.test_run else "epoch",
-            save_strategy="no" if self.test_run else "epoch",
+            evaluation_strategy="epoch" if not self.test_run and data_validation else "no",
+            save_strategy="epoch" if not self.test_run and data_validation else "no",
             per_device_train_batch_size=self.batch_size,
             per_device_eval_batch_size=self.batch_size,
             num_train_epochs=self.epochs,
@@ -236,25 +276,31 @@ class ClickbaitTransformer(ClickbaitModelBase):
             learning_rate=self.learning_rate,
             fp16=self.fp16 and torch.cuda.is_available(), # Only enable fp16 if cuda is available
             logging_dir=os.path.join(self.output_directory, "logs"),
-            load_best_model_at_end=False if self.test_run else True,
+            load_best_model_at_end=True if not self.test_run and data_validation else False,
             metric_for_best_model="eval_loss", # Regression task, use loss
             greater_is_better=False, # Lower loss is better
             report_to="none", # external reporting like wandb disabled
 
         )
 
-        self.trainer = Trainer(
+        self.trainer = trainer_class(
             model=self.model, # Already initialized in __init__
             args=training_args,
             train_dataset=data_train,
             eval_dataset=data_validation,
+            **trainer_kwargs
             # callbacks=[EarlyStoppingCallback(early_stopping_patience=3)]
             # No compute_metrics needed by default for Trainer's regression eval loss
         )
 
+        # Training start
         print(f"Starting training for {self.epochs} epochs...")
         self.trainer.train()
         print("Training finished.")
+
+        # Best model instead of last one
+        self.model = self.trainer.model
+        self.model.to(self.device)
 
         # Save the best model and tokenizer if not test run
         if not self.test_run:
@@ -329,44 +375,73 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
         def __init__(self, transformer_name: str, num_features: int, dropout_rate: float = 0.3):
             super().__init__()
             self.bert = AutoModel.from_pretrained(transformer_name)  # Base transformer
-            self.bert_config = self.bert.config  # Store base config for later
-            hidden_size = self.bert_config.hidden_size
+            self.bert_config = self.bert.config  # Store base config
+            bert_hidden_size = self.bert_config.hidden_size
 
             # Store config for saving/loading
             self.custom_config = {
                 "transformer_name": transformer_name,
                 "num_features": num_features,
                 "dropout_rate": dropout_rate,
-                "bert_hidden_size": hidden_size
+                "bert_hidden_size": bert_hidden_size,
+                "fusion_strategy": "gated"  # Add new info about fusion
             }
 
-            self.dropout = nn.Dropout(dropout_rate)
+            self.dropout = nn.Dropout(dropout_rate)  #
+
+            # Feature projection layer (projects engineered features to bert_hidden_size)
             self.feature_proj = nn.Sequential(
-                nn.LayerNorm(num_features),
-                nn.Linear(num_features, hidden_size),  # Project features
-                nn.ReLU()
+                nn.LayerNorm(num_features),  #
+                nn.Linear(num_features, bert_hidden_size),  # Project features
+                nn.ReLU()  #
             )
+
+            # Gate layers
+            # Input to each gate controller will be the concatenation of cls_output and projected_features
+            gate_input_dim = bert_hidden_size * 2
+            self.text_gate_fc = nn.Linear(gate_input_dim, bert_hidden_size)
+            self.feature_gate_fc = nn.Linear(gate_input_dim, bert_hidden_size)
+
+            # Regressor: input dimension remains bert_hidden_size * 2 (concatenation of gated_cls_output and gated_projected_features)
             self.regressor = nn.Sequential(
-                nn.Linear(hidden_size * 2, 128),  # Combined BERT output and projected features
-                nn.ReLU(),
-                nn.Dropout(dropout_rate / 2),
-                nn.Linear(128, 1)
+                nn.Linear(bert_hidden_size * 2, 128),  #
+                nn.ReLU(),  #
+                nn.Dropout(dropout_rate / 2),  #
+                nn.Linear(128, 1)  #
             )
 
         def forward(self, input_ids, attention_mask, features):
-            outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+            outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)  #
             try:
-                cls_output = outputs.pooler_output
+                cls_output = outputs.pooler_output  # # (batch_size, bert_hidden_size)
             except AttributeError:
-                mask = attention_mask.unsqueeze(-1).expand(outputs.last_hidden_state.size()).float()
-                sum_hidden = (outputs.last_hidden_state * mask).sum(1)
-                avg_hidden = sum_hidden / torch.clamp(mask.sum(1), min=1e-9)
-                cls_output = avg_hidden
+                # Fallback if pooler_output is not available (e.g., for some specific models)
+                mask = attention_mask.unsqueeze(-1).expand(outputs.last_hidden_state.size()).float()  #
+                sum_hidden = (outputs.last_hidden_state * mask).sum(1)  #
+                avg_hidden = sum_hidden / torch.clamp(mask.sum(1), min=1e-9)  #
+                cls_output = avg_hidden  #
 
-            projected_features = self.feature_proj(features)
-            combined = torch.cat((cls_output, projected_features), dim=1)
-            x = self.dropout(combined)
-            logits = self.regressor(x)
+            projected_features = self.feature_proj(features)  # (batch_size, bert_hidden_size)
+
+            # Input for the gate controllers
+            combined_for_gates = torch.cat((cls_output, projected_features),
+                                           dim=1)  # (batch_size, bert_hidden_size * 2)
+
+            # Calculate gate values (sigmoid to keep them between 0 and 1)
+            text_gate_values = torch.sigmoid(self.text_gate_fc(combined_for_gates))  # (batch_size, bert_hidden_size)
+            feature_gate_values = torch.sigmoid(
+                self.feature_gate_fc(combined_for_gates))  # (batch_size, bert_hidden_size)
+
+            # Apply gates
+            gated_cls_output = cls_output * text_gate_values
+            gated_projected_features = projected_features * feature_gate_values
+
+            # Combine gated features
+            combined_gated_features = torch.cat((gated_cls_output, gated_projected_features),
+                                                dim=1)  # (batch_size, bert_hidden_size * 2)
+
+            x = self.dropout(combined_gated_features)  #
+            logits = self.regressor(x)  #
             return logits.squeeze(-1)  # Return raw logits for regression
 
     # Wrapper for Hugging Face Trainer compatibility
@@ -419,7 +494,7 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
     # model_name_default = os.getenv("MODEL_NAME", "bert-base-uncased")
     def __init__(self,
                  model_name_or_path: str = HEADLINE_CONTENT_CONFIG["model_name"],  # Base transformer name
-                 tokenizer_name: str = HEADLINE_CONTENT_CONFIG["tokenizer_name"],
+                 tokenizer_name: str = None,
                  num_features: int = 14,  # Default, should be derived from dataset ideally
                  length_max: int = HEADLINE_CONTENT_CONFIG["length_max"],
                  batch_size: int = HEADLINE_CONTENT_CONFIG["batch_size"],
@@ -438,6 +513,10 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
         self.fp16 = fp16  # Store fp16
         self.output_directory = output_directory  # Use the argument
         self.num_features = num_features  # Store num_features
+        self.dropout_rate = dropout_rate
+
+        self.feature_means = None
+        self.feature_stds = None
 
         os.makedirs(self.output_directory, exist_ok=True)
 
@@ -447,7 +526,7 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
             self.model = self.HybridClickbaitModel(
                 transformer_name=model_name_or_path,
                 num_features=self.num_features,
-                dropout_rate=dropout_rate
+                dropout_rate=self.dropout_rate
             ).to(self.device)
         except OSError as e:
             model_default = HEADLINE_CONTENT_CONFIG["model_name"]  #
@@ -455,29 +534,28 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
             self.model = self.HybridClickbaitModel(
                 transformer_name=model_default,
                 num_features=self.num_features,
-                dropout_rate=dropout_rate).to(self.device)
+                dropout_rate=self.dropout_rate).to(self.device)
 
         # Tokenizer should match the base transformer
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name if tokenizer_name else model_name_or_path,
                                                        **kwargs)
 
-    def _load_data(self, csv_path: str):  # Return type hint: -> Dataset
-        # ... (same as your existing _load_data for hybrid) ...
-        # Make sure it returns Clickbait17FeatureAugmentedDataset
+    def _load_data(self, csv_path: str) -> Clickbait17FeatureAugmentedDataset:
+        """Loads data using the classmethod that also loads feature stats."""
         try:
-            df = pd.read_csv(csv_path)
-            # Pass num_features if your dataset needs it, or let it be inferred/fixed
-            return Clickbait17FeatureAugmentedDataset(df, self.tokenizer, self.length_max)  #
-        except FileNotFoundError:
-            print(f"Error: File not found at {csv_path}")
-            return Clickbait17FeatureAugmentedDataset(
-                pd.DataFrame(columns=["post", "headline", "content", "clickbait_score"]), self.tokenizer,
-                self.length_max)
+            # FIX: Use the from_feature_csv classmethod to ensure metadata (mean/std) is loaded.
+            # This requires the corresponding _metadata.json file to exist.
+            if not os.path.exists(csv_path.replace(".csv", "_metadata.json")):
+                 raise FileNotFoundError(f"Metadata file not found for {csv_path}. Please run data preparation script.")
+            return Clickbait17FeatureAugmentedDataset.from_feature_csv(csv_path, self.tokenizer, self.length_max)
+        except FileNotFoundError as e:
+            print(f"Error: {e}")
+            # Return an empty dataset to be handled by the train/test methods
+            return Clickbait17FeatureAugmentedDataset(pd.DataFrame(columns=["post", "headline", "content", "clickbait_score"]), self.tokenizer, self.length_max)
         except Exception as e:
-            print(f"Error loading data from {csv_path}: {e}")
-            return Clickbait17FeatureAugmentedDataset(
-                pd.DataFrame(columns=["post", "headline", "content", "clickbait_score"]), self.tokenizer,
-                self.length_max)
+            print(f"An unexpected error occurred while loading data from {csv_path}: {e}")
+            return Clickbait17FeatureAugmentedDataset(pd.DataFrame(columns=["post", "headline", "content", "clickbait_score"]), self.tokenizer, self.length_max)
+
 
     def train(self, train_csv: str, validation_csv: str):
         train_dataset = self._load_data(train_csv)
@@ -486,6 +564,32 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
         if len(train_dataset) == 0 or len(val_dataset) == 0:
             print("Error: Training or validation dataset is empty. Aborting training.")
             return
+
+        # FIX: Dynamically confirm num_features and store normalization stats
+        loaded_num_features = len(train_dataset.feature_means)
+        if self.num_features != loaded_num_features:
+            print(f"Warning: num_features in config ({self.num_features}) does not match data ({loaded_num_features}). Using {loaded_num_features}.")
+            self.num_features = loaded_num_features
+
+        # Store normalization stats from the training set on the model instance for later use in prediction.
+        self.feature_means = train_dataset.feature_means
+        self.feature_stds = train_dataset.feature_stds
+        # Ensure validation set uses the same stats (from_feature_csv already handles this)
+        val_dataset.feature_means = self.feature_means
+        val_dataset.feature_stds = self.feature_stds
+
+
+        # FIX: Instantiate the inner model here, now that num_features is confirmed.
+        try:
+            print(f"Initializing inner HybridClickbaitModel with base transformer: {self.model_name}")
+            self.model = self.HybridClickbaitModel(
+                transformer_name=self.model_name,
+                num_features=self.num_features,
+                dropout_rate=self.dropout_rate
+            ).to(self.device)
+        except OSError as e:
+            print(f"Error loading base transformer '{self.model_name}' for hybrid model: {e}.")
+            raise e
 
         # Prepare config for HybridWrapperModel
         # It should be the config of the base transformer, with custom attributes added.
@@ -565,40 +669,43 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
             print(f"Test run model and tokenizer saved.")
             # self.model is already updated from self.trainer.model
 
-    def predict(self, post: str, headline: str, content: str) -> float:  #
-        # ... (predict method remains largely the same, ensure self.model is used correctly) ...
+    def predict(self, post: str, headline: str, content: str) -> float:
         if self.model is None:
-            raise ValueError("Model has not been loaded or trained yet.")
+            raise ValueError("Model has not been trained or loaded yet.")
+        # FIX: Check if normalization stats are available.
+        if self.feature_means is None or self.feature_stds is None:
+            raise ValueError("Feature normalization stats (mean/std) are not available. Train the model first or load them manually.")
+
         self.model.to(self.device)
         self.model.eval()
 
-        temp_data = pd.DataFrame([{"post": post, "headline": headline, "content": content, "clickbait_score": 0.0}])
-        # Assuming Clickbait17FeatureAugmentedDataset is correctly imported and set up
-        # It needs access to tokenizer and length_max, potentially means/stds for normalization
-        # For prediction, ensure normalization uses stats from training or is not applied if model trained without it.
-        # The current _load_data doesn't set up means/stds for normalization on the fly for new instances.
-        # This is a separate concern about feature consistency in prediction.
-        # For now, let's assume features are extracted as during training.
-        temp_dataset = self._load_data_for_prediction(temp_data)  # You might need a separate method for this
+        # FIX: Perform feature extraction and normalization directly using the stored stats,
+        # avoiding the flawed _load_data_for_prediction method.
+        # Create a temporary dataset instance just to use its feature extraction method.
+        temp_dataset = Clickbait17FeatureAugmentedDataset(pd.DataFrame(), self.tokenizer, self.length_max)
+        # Manually set the normalization stats on this temporary instance
+        temp_dataset.feature_means = self.feature_means
+        temp_dataset.feature_stds = self.feature_stds
 
-        if len(temp_dataset) == 0:
-            print("Warning: Could not process input for prediction.")
-            return float("nan")
+        # Extract and normalize features for the single input
+        features = temp_dataset._extract_features(post, headline, content, normalise=True)
+        features_tensor = features.unsqueeze(0).to(self.device)
 
-        item = temp_dataset[0]
+        # Tokenize text
+        inputs = self.tokenizer(
+            text=post,
+            text_pair=content,
+            return_tensors="pt",
+            truncation="longest_first",
+            padding=True,
+            max_length=self.length_max
+        )
+        input_ids = inputs["input_ids"].to(self.device)
+        attention_mask = inputs["attention_mask"].to(self.device)
 
-        input_ids = item["input_ids"].unsqueeze(0).to(self.device)
-        attention_mask = item["attention_mask"].unsqueeze(0).to(self.device)
-        features_tensor = item["features"].unsqueeze(0).to(self.device)  # Renamed for clarity
         with torch.no_grad():
             output = self.model(input_ids, attention_mask, features_tensor)
         return output.item()
-
-    # Helper for predict, might need to adjust feature normalization handling
-    def _load_data_for_prediction(self, dataframe: pd.DataFrame):
-        # This is a simplified version. Ideally, use the same feature scaling (mean/std)
-        # as used during training. This might require loading those stats.
-        return Clickbait17FeatureAugmentedDataset(dataframe, self.tokenizer, self.length_max)
 
     def load_model(self, model_path: str = None):
         """

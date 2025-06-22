@@ -24,6 +24,9 @@ from sklearn.metrics import (
     precision_recall_curve,
     confusion_matrix,
 )
+import logging
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["evaluate_clickbait_predictions"]
 
@@ -108,7 +111,7 @@ def evaluate_clickbait_predictions(
 
     if verbose:
         for k, v in metrics.items():
-            print(f"{k}: {v:.4f}")
-        print(confusion_matrix(y_true_bin, y_pred_bin))
+            logging.info(f"{k}: {v:.4f}")
+        logging.info(f"Confusion matrix:\n{confusion_matrix(y_true_bin, y_pred_bin)}")
 
     return metrics

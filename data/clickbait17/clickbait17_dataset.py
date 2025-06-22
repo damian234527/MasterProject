@@ -41,10 +41,26 @@ class ClickbaitDataset(Dataset):
 class Clickbait17Dataset(ClickbaitDataset):
     def __getitem__(self, idx):
         row = self.data.iloc[idx]
-        post, headline, content, label = row["post"], row["headline"], row["content"], row["clickbait_score"]
+        # Retrieve original values
+        post_original, headline_original, content, label = row["post"], row["headline"], row["content"], row["clickbait_score"]
+
+        # Apply the logic for combining post and headline for the current row
+        combined_text = ""
+        if pd.isna(post_original):
+            post_original = ""
+        if pd.isna(headline_original):
+            headline_original = ""
+
+        if post_original and headline_original:
+            combined_text = f"{post_original}: {headline_original}"
+        elif post_original:
+            combined_text = post_original
+        elif headline_original:
+            combined_text = headline_original
+        # If both are empty, combined_text remains empty string. The tokenizer will handle this.
 
         encoding = self.tokenizer(
-            text=post,
+            text=combined_text, # Use the newly combined text here
             text_pair=content,
             truncation=True,
             padding="max_length",
@@ -118,10 +134,6 @@ class Clickbait17FeatureAugmentedDataset(ClickbaitDataset):
         post, headline, content, label = row["post"], row["headline"], row["content"], row["clickbait_score"]
 
         features = self._extract_features(post, headline, content, normalise=True)
-
-        ## TODO temporary, Compute mean and std across training set, store them, and normalize in _extract_features using those values
-        # features = torch.tensor(features, dtype=torch.float)
-        # features = (features - features.mean()) / (features.std() + 1e-6)
 
         encoding = self.tokenizer(
             text=post,

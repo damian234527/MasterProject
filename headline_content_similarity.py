@@ -1,4 +1,5 @@
 import os.path
+import sys
 
 import numpy as np
 import torch
@@ -8,14 +9,20 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity as sk_cosine_similarity
 from transformers import AutoTokenizer, AutoModel
 from functools import lru_cache
+import pandas as pd
+from tqdm import tqdm
 from config import GENERAL_CONFIG, HEADLINE_CONTENT_CONFIG
 from headline_content_models import (
     ClickbaitModelBase,
     ClickbaitTransformer,
     ClickbaitFeatureEnhancedTransformer
 )
+from headline_content_evaluation import evaluate_clickbait_predictions
 from data.clickbait17.clickbait17_utils import get_dataset_folder
+import logging_config
+import logging
 
+logger = logging.getLogger(__name__)
 seed = GENERAL_CONFIG["seed"]
 np.random.seed(seed)
 torch.manual_seed(seed)
@@ -44,6 +51,7 @@ class CosineSimilarityTFIDF(SimilarityMethod):
     @lru_cache(maxsize=128)
     def compute_score(self, headline: str, content: str) -> float:
         if not headline or not content:
+            logger.warning("No headline or content provided.")
             return 0.0
         try:
             vectors = self.vectorizer.fit_transform([headline, content])
@@ -67,6 +75,7 @@ class TransformerEmbeddingSimilarity(SimilarityMethod):
     @lru_cache(maxsize=128)
     def _get_embedding(self, text: str) -> Optional[np.ndarray]:
         if not text:
+            logger.warning("No text provided.")
             return None
         self._load_model()
         inputs = self.tokenizer(text, return_tensors="pt", truncation=True, padding=True, max_length=self.max_length)
@@ -105,11 +114,79 @@ class ClickbaitModelScore(SimilarityMethod):
     @lru_cache(maxsize=128)
     def compute_score(self, headline: str, content: str) -> float:
         if not self.model.model:
+            logger.warning("Inner model for ClickbaitModelScore is not loaded.")
             return float('nan')
         try:
-            return float(self.model.predict(headline, content))
+            return float(self.model.predict(post=headline, headline=headline, content=content))
         except Exception:
             return float('nan')
+# ============================================
+# Wrapper for Evaluation
+# ============================================
+
+class SimilarityMethodEvaluator:
+    """
+    A wrapper to make non-trainable SimilarityMethod instances compatible
+    with the evaluation framework used for trainable models.
+    """
+    def __init__(self, method: SimilarityMethod, model_type: str):
+        """
+        Initializes the evaluator.
+
+        Args:
+            method (SimilarityMethod): The similarity method instance to evaluate (e.g., CosineSimilarityTFIDF).
+            model_type (str): A descriptive name for the method for reporting purposes.
+        """
+        if not isinstance(method, SimilarityMethod):
+            raise TypeError("The provided method must be an instance of SimilarityMethod.")
+        self.method = method
+        self.model_type = model_type
+
+    def test(self, test_csv: str) -> Tuple[Dict[str, float], list]:
+        """
+        Evaluates the similarity method on a test dataset.
+        Mimics the .test() method of the ClickbaitModelBase class.
+
+        Args:
+            test_csv (str): Path to the test CSV file.
+
+        Returns:
+            A tuple containing:
+            - A dictionary of calculated metrics.
+            - A list of the raw prediction scores.
+        """
+        logging.info(f"--- Evaluating non-trainable model: {self.model_type} ---")
+        try:
+            df = pd.read_csv(test_csv).dropna(subset=["headline", "content", "clickbait_score"])
+            if df.empty:
+                logging.warning("Warning: Test dataframe is empty.")
+                return {}, []
+        except FileNotFoundError:
+            logging.error(f"Error: Test file not found at {test_csv}")
+            return {}, []
+
+        predictions = []
+        true_labels = list(df["clickbait_score"])
+
+        # Use tqdm for a progress bar, as some embedding models can be slow.
+        for _, row in tqdm(df.iterrows(), total=df.shape[0], desc=f"Predicting with {self.model_type}"):
+            score = self.method.compute_score(row["headline"], row["content"])
+            predictions.append(score)
+
+        # Use the existing evaluation function to get all metrics
+        # Set verbose=False as the main script will print the summary
+        metrics = evaluate_clickbait_predictions(
+            y_true=true_labels,
+            y_pred=predictions,
+            verbose=False
+        )
+
+        # Clear GPU cache if the underlying method used it (e.g., TransformerEmbeddingSimilarity)
+        if hasattr(self.method, 'model') and isinstance(self.method.model, torch.nn.Module):
+             if torch.cuda.is_available():
+                 torch.cuda.empty_cache()
+
+        return metrics, predictions
 
 # ============================================
 # Main Comparator
@@ -131,7 +208,7 @@ class HeadlineContentSimilarity:
         start = time.perf_counter()
         score = self.method.compute_score(headline, content)
         elapsed = time.perf_counter() - start
-        print(f"Comparison took {elapsed:.4f} seconds.")
+        logging.info(f"Comparison took {elapsed:.4f} seconds.")
         return score
 
 # ============================================
@@ -144,9 +221,20 @@ if __name__ == "__main__":
     # print(tets.model.test("./data/clickbait17/models/bert-base-uncased/clickbait17_test.csv"))
     for transformer in transformers:
         directory = get_dataset_folder(transformer)
-        # standard = ClickbaitModelScore(model_type="standard", model_name_or_path="./models/standard_sentence-transformers_all-MiniLM-L6-v2_1748375172/best_model")
-        hybrid = ClickbaitModelScore(model_type="hybrid", model_name_or_path=transformer)
-        hybrid.model.load_model("./models/hybrid/best_model")
+        standard = ClickbaitModelScore(model_type="standard", model_name_or_path=HEADLINE_CONTENT_CONFIG["model_name"])
+        standard = ClickbaitModelScore(model_type="standard", model_name_or_path="models/standard_sentence-transformers_all-MiniLM-L6-v2_1750613557/best_model")
+
+        #standard.model.train(os.path.join(directory, "clickbait17_train.csv"),
+        #                     os.path.join(directory, "clickbait17_validation.csv"))
+        #logger.info("Standard")
+        # standard.model.train(os.path.join(directory, "clickbait17_train.csv"), sampling_strategy="oversample")
+        # sampling_strategy="oversample",
+        # use_weighted_loss=True
+        logger.info("")
+        standard.model.test(os.path.join(directory, "clickbait17_test.csv"))
+
+        # hybrid = ClickbaitModelScore(model_type="hybrid", model_name_or_path=transformer)
+        # hybrid.model.load_model("./models/hybrid/best_model")
         # --------------------------------------------
         # UNTRAINED
         #print("UNTRAINED")
@@ -158,8 +246,8 @@ if __name__ == "__main__":
         # TRAINED
         #standard.model.train(os.path.join(directory, "clickbait17_train.csv"), os.path.join(directory, "clickbait17_validation.csv"))
         #standard.model.test(os.path.join(directory, "clickbait17_test.csv"))
-        # hybrid.model.train(os.path.join(directory, "clickbait17_train_features.csv"), os.path.join(directory, "clickbait17_validation_features.csv"))
+        #hybrid.model.train(os.path.join(directory, "clickbait17_train_features.csv"), os.path.join(directory, "clickbait17_validation_features.csv"))
 
         # standard.model.test(os.path.join(directory, "clickbait17_test.csv"))
-        print("HYBRID")
-        hybrid.model.test(os.path.join(directory, "clickbait17_test_features.csv"))
+        #print("HYBRID")
+        #hybrid.model.test(os.path.join(directory, "clickbait17_test_features.csv"))

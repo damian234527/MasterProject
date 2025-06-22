@@ -6,11 +6,14 @@ from sklearn.model_selection import KFold, StratifiedKFold
 import pandas as pd
 import random
 import numpy as np
+import json
 from headline_content_models import ClickbaitTransformer, ClickbaitFeatureEnhancedTransformer
 from data.clickbait17.clickbait17_prepare import dataset_check
 from config import GENERAL_CONFIG, HEADLINE_CONTENT_CONFIG, DATASETS_CONFIG
 from typing import Optional
+import logging
 
+logger = logging.getLogger(__name__)
 pruner = optuna.pruners.MedianPruner(n_warmup_steps=1)
 seed = GENERAL_CONFIG["seed"]
 RESULTS_DIR = "optimization_results"
@@ -79,12 +82,25 @@ def train_and_evaluate(
         # if test_run:
             # df = df.sample(frac=0.3, random_state=seed_trial)
 
+        original_metadata = None
+        if model_class == "hybrid":
+            # For the hybrid model, we must load the metadata from the original full training set
+            # to pass it to the temporary fold files, preventing data leakage.
+            metadata_path = train_csv.replace(".csv", "_metadata.json")
+            if not os.path.exists(metadata_path):
+                raise FileNotFoundError(
+                    f"Metadata file not found for the main training CSV: {metadata_path}. "
+                    "Please ensure the data preparation script has been run."
+                )
+            with open(metadata_path, 'r') as f:
+                original_metadata = json.load(f)
+
         bins = pd.qcut(df['clickbait_score'], q=2, labels=False, duplicates='drop')
         if bins.nunique() > 1 and all(bins.value_counts() >= folds_number):
             kf = StratifiedKFold(n_splits=folds_number, shuffle=True, random_state=seed_trial)
             split_generator = kf.split(df, bins)
         else:
-            print("Insufficient samples for stratification, using KFold")
+            logging.warning("Insufficient samples for stratification, using KFold")
             kf = KFold(n_splits=folds_number, shuffle=True, random_state=seed_trial)
             split_generator = kf.split(df)
 
@@ -98,6 +114,26 @@ def train_and_evaluate(
             val_path = "temp/validation.csv"
             train_df.to_csv(train_path, index=False)
             val_df.to_csv(val_path, index=False)
+
+            if model_class == "hybrid" and original_metadata:
+                # Create the corresponding metadata files for the temporary fold CSVs.
+                # This ensures the model uses the correct normalization stats from the full training set.
+                feature_cols = [col for col in train_df.columns if col.startswith("f")]
+                if not feature_cols:
+                    raise ValueError("No feature columns found in the dataframe for hybrid model.")
+
+                fold_metadata = {
+                    "features_mean": train_df[feature_cols].mean().tolist(),
+                    "features_std": train_df[feature_cols].std().tolist()
+                }
+
+                # Write this fold-specific metadata for both temp files to use
+                train_meta_path = train_path.replace(".csv", "_metadata.json")
+                val_meta_path = val_path.replace(".csv", "_metadata.json")
+                with open(train_meta_path, 'w') as f:
+                    json.dump(fold_metadata, f, indent=4)
+                with open(val_meta_path, 'w') as f:
+                    json.dump(fold_metadata, f, indent=4)
 
             model = model_class_ref(**kwargs)
             model.train(train_path, val_path)
@@ -202,8 +238,8 @@ if __name__ == "__main__":
     if not hybrid:
         study_standard = optuna.create_study(direction="minimize", sampler=optuna.samplers.TPESampler(), pruner=pruner)
         study_standard.optimize(create_objective_standard(train_csv=os.path.join(path_basic, f"{filename_used}.csv"), test=test, model_name=model_name, tokenizer_name=tokenizer_name), n_trials=2)
-        print("Best standard transformer params:", study_standard.best_trial.params)
+        logging.info("Best standard transformer params:", study_standard.best_trial.params)
     else:
         study_hybrid = optuna.create_study(direction="minimize", sampler=optuna.samplers.TPESampler(), pruner=pruner)
         study_hybrid.optimize(create_objective_hybrid(train_csv=os.path.join(path_basic, f"{filename_used}_{DATASETS_CONFIG["features_suffix"]}.csv"), test=test, model_name=model_name, tokenizer_name=tokenizer_name), n_trials=2)
-        print("Best hybrid transformer params:", study_hybrid.best_trial.params)
+        logging.info("Best hybrid transformer params:", study_hybrid.best_trial.params)
