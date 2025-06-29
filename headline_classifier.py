@@ -124,16 +124,12 @@ class HeadlineClassifier:
         return self.pipeline.predict(headlines).tolist()
 
 if __name__ == "__main__":
-    # Configure logging to see the output
-    logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
     # Load data once
     data_filepath = "data/headline_clickbait.csv" # Ensure this file exists
     try:
         classifier_data_loader = HeadlineClassifier() # Temporary instance to load data
         df = classifier_data_loader.load_data(data_filepath)
-        df2 = classifier_data_loader.load_data("data/headline_classifier_dataset/clickbait17_headline_train.csv")
-        df3 = classifier_data_loader.load_data("data/headline_classifier_dataset/clickbait17_headline_test.csv").dropna(how="any")
     except (FileNotFoundError, ValueError) as e:
         logging.error(f"Error loading data: {e}")
         exit()
@@ -157,11 +153,9 @@ if __name__ == "__main__":
 
         # Train the model
         classifier.train(X_train, y_train)
-        classifier.train(df2["headline"], df2["clickbait"])
 
         # Test the model and get the F1-score
         current_score = classifier.test(X_test, y_test)
-        classifier.test(df3["headline"], df3["clickbait"])
 
         # Compare and update if current model is better
         if current_score > best_score:

@@ -1,5 +1,6 @@
 GENERAL_CONFIG = {
     "seed": 42,
+    "clickbait_threshold": 0.5,
     "separator": "-" * 40
 }
 
@@ -19,8 +20,8 @@ HEADLINE_CONTENT_CONFIG = {
 }
 
 HEADLINE_CONFIG = {
-    "model_type": "logistic",
-    "model_path": "models/headline_models/logistic.joblib",
+    "model_type": "naive_bayes",
+    "model_path": "models/headline_models/naive_bayes_best.joblib",
 
 }
 

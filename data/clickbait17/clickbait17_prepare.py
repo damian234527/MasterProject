@@ -6,11 +6,18 @@ from transformers import AutoTokenizer
 from data.clickbait17.clickbait17_preprocess import dataset17_create_csv
 from data.clickbait17.clickbait17_dataset import Clickbait17FeatureAugmentedDataset
 from data.clickbait17.clickbait17_utils import get_dataset_folder, get_safe_name
-from config import DATASETS_CONFIG, HEADLINE_CONTENT_CONFIG
+from config import DATASETS_CONFIG, HEADLINE_CONTENT_CONFIG, HEADLINE_CONFIG
 from typing import Dict
+import logging_config
 import logging
+from headline_classifier import HeadlineClassifier  # MODIFIED: Import classifier
+from tqdm import tqdm
+
+# Set pandas to use tqdm for progress bars on .apply()
+tqdm.pandas()
 
 logger = logging.getLogger(__name__)
+
 
 def save_metadata(csv_path: str, tokenizer_name: str, extra: Dict = None):
     metadata = {
@@ -33,7 +40,7 @@ def metadata_matches(csv_path: str, tokenizer_name: str) -> bool:
     return metadata.get("tokenizer_name") == tokenizer_name
 
 
-def prepare_clickbait17_datasets(base_path: str = None, tokenizer_name: str = None):
+def prepare_clickbait17_datasets(base_path: str = None, tokenizer_name: str = None, dataset_type: str = "both"):
     logging.info("\n--- Preparing Clickbait17 datasets ---")
 
     subsets = {
@@ -52,51 +59,30 @@ def prepare_clickbait17_datasets(base_path: str = None, tokenizer_name: str = No
     dataset_folder = get_dataset_folder(tokenizer_name)
     os.makedirs(dataset_folder, exist_ok=True)
 
+    # MODIFIED: Load the trained headline classifier once
+    headline_classifier = None
+    if dataset_type == "hybrid" or dataset_type == "both":
+        logging.info("Loading headline classifier to generate scores...")
+        headline_classifier = HeadlineClassifier(model_type=HEADLINE_CONFIG["model_type"])
+        try:
+            headline_classifier.load_model()
+        except FileNotFoundError:
+            logging.error(f"FATAL: Headline classifier model not found at '{headline_classifier.model_path}'.")
+            logging.error(
+                "Please run headline_classifier.py to train and save the model before preparing the feature-augmented dataset.")
+            raise
+
     # Store training set statistics to prevent data leakage
     training_set_stats = {}
 
-    # --- Process Training Set First ---
-    train_subset_key = "train"
-    train_subset_name = subsets[train_subset_key]
-    subset_path = os.path.join(base_path, train_subset_name)
-
-    # Step 1: Basic CSV for training set
-    basic_csv_filename = os.path.join(dataset_folder, f"{DATASETS_CONFIG['dataset_headline_content_name']}_{train_subset_name}.csv")
-    if not metadata_matches(basic_csv_filename, tokenizer_name):
-        logging.info(f"Creating basic CSV for {train_subset_name}...")
-        df = dataset17_create_csv(subset_path)
-        df.to_csv(basic_csv_filename, index=False)
-        save_metadata(basic_csv_filename, tokenizer_name)
-    else:
-        logging.info(f"Basic CSV for {train_subset_name} already exists. Skipping.")
-
-    # Step 2: Feature-augmented CSV for training set
-    feature_csv_filename = os.path.join(dataset_folder, f"{DATASETS_CONFIG['dataset_headline_content_name']}_{train_subset_name}_{DATASETS_CONFIG['features_suffix']}.csv")
-    if not metadata_matches(feature_csv_filename, tokenizer_name):
-        logging.info(f"Creating feature-augmented CSV for {train_subset_name}...")
-        if not 'df' in locals():
-             df = pd.read_csv(basic_csv_filename)
-        dataset = Clickbait17FeatureAugmentedDataset(df, tokenizer)
-        df_features = dataset.save_with_features(feature_csv_filename)
-        feature_columns = [col for col in df_features.columns if col.startswith("f")]
-        mean = df_features[feature_columns].mean().tolist()
-        std = df_features[feature_columns].std(ddof=0).tolist()
-        training_set_stats = {"features_mean": mean, "features_std": std}
-        save_metadata(feature_csv_filename, tokenizer_name, training_set_stats)
-    else:
-        logging.info(f"Feature-augmented CSV for {train_subset_name} already exists. Loading stats.")
-        with open(feature_csv_filename.replace(".csv", "_metadata.json"), "r") as f:
-            meta = json.load(f)
-            training_set_stats = {"features_mean": meta["features_mean"], "features_std": meta["features_std"]}
-
-    # --- Process Validation and Test Sets ---
-    for subset_key in ["validation", "test"]:
-        subset_name = subsets[subset_key]
+    # --- Process All Subsets ---
+    for subset_key, subset_name in subsets.items():
         subset_path = os.path.join(base_path, subset_name)
-        df = None # Reset dataframe
+        df = None  # Reset dataframe
 
-        # Step 1: Basic CSV
-        basic_csv_filename = os.path.join(dataset_folder, f"{DATASETS_CONFIG['dataset_headline_content_name']}_{subset_name}.csv")
+        # --- Step 1: Basic CSV creation ---
+        basic_csv_filename = os.path.join(dataset_folder,
+                                          f"{DATASETS_CONFIG['dataset_headline_content_name']}_{subset_name}.csv")
         if not metadata_matches(basic_csv_filename, tokenizer_name):
             logging.info(f"Creating basic CSV for {subset_name}...")
             df = dataset17_create_csv(subset_path)
@@ -105,20 +91,56 @@ def prepare_clickbait17_datasets(base_path: str = None, tokenizer_name: str = No
         else:
             logging.info(f"Basic CSV for {subset_name} already exists. Skipping.")
 
-        # Step 2: Feature-augmented CSV
-        feature_csv_filename = os.path.join(dataset_folder, f"{DATASETS_CONFIG['dataset_headline_content_name']}_{subset_name}_{DATASETS_CONFIG['features_suffix']}.csv")
-        if not metadata_matches(feature_csv_filename, tokenizer_name):
-            logging.info(f"Creating feature-augmented CSV for {subset_name}...")
-            if df is None:
-                 df = pd.read_csv(basic_csv_filename)
-            dataset = Clickbait17FeatureAugmentedDataset(df, tokenizer)
-            dataset.save_with_features(feature_csv_filename)
-            # Use training set stats for metadata to prevent data leakage
-            save_metadata(feature_csv_filename, tokenizer_name, training_set_stats)
-        else:
-            logging.info(f"Feature-augmented CSV for {subset_name} already exists. Skipping.")
+        # --- Step 2: Feature-augmented CSV creation ---
+        if dataset_type == "hybrid" or dataset_type == "both":
+            feature_csv_filename = os.path.join(dataset_folder,
+                                                f"{DATASETS_CONFIG['dataset_headline_content_name']}_{subset_name}_{DATASETS_CONFIG['features_suffix']}.csv")
 
-    logging.info(f"\nDataset preparation complete. Stored in '{dataset_folder}'.")
+            # Load stats from training if we are processing validation/test sets
+            if subset_key != "train" and not training_set_stats:
+                train_meta_path = os.path.join(dataset_folder,
+                                               f"{DATASETS_CONFIG['dataset_headline_content_name']}_train_{DATASETS_CONFIG['features_suffix']}_metadata.json")
+                with open(train_meta_path, "r") as f:
+                    meta = json.load(f)
+                    training_set_stats = {"features_mean": meta["features_mean"], "features_std": meta["features_std"]}
+
+            if not metadata_matches(feature_csv_filename, tokenizer_name):
+                logging.info(f"Creating feature-augmented CSV for {subset_name}...")
+                if df is None:
+                    df = pd.read_csv(basic_csv_filename)
+
+                # MODIFICATION: Generate and add headline_score feature
+                logging.info(f"Generating headline scores for {subset_name}...")
+                if 'headline' in df.columns and not df['headline'].isnull().all():
+                    headlines = df['headline'].fillna('').tolist()
+                    scores = headline_classifier.predict_proba(headlines)
+                    df['headline_score'] = scores
+                else:
+                    logging.warning("No 'headline' column found. Adding 'headline_score' column with zeros.")
+                    df['headline_score'] = 0.0
+
+                # The dataframe `df` now contains the required `headline_score` column.
+                # Instantiate the dataset class which now expects this column.
+                dataset = Clickbait17FeatureAugmentedDataset(df, tokenizer)
+
+                # Save the dataframe with all 23 features.
+                df_features = dataset.save_with_features(feature_csv_filename)
+
+                # If this is the training set, calculate and store normalization stats.
+                if subset_key == "train":
+                    feature_columns = [col for col in df_features.columns if col.startswith("f")]
+                    mean = df_features[feature_columns].mean().tolist()
+                    std = df_features[feature_columns].std(ddof=0).tolist()  # Use ddof=0 for population std
+                    training_set_stats = {"features_mean": mean, "features_std": std}
+
+                # Save metadata for the new feature-augmented file.
+                # Validation/test sets will use stats from the training set.
+                save_metadata(feature_csv_filename, tokenizer_name, training_set_stats)
+            else:
+                logging.info(f"Feature-augmented CSV for {subset_name} already exists. Skipping.")
+
+    logging.info(f"\nDataset preparation complete. All files stored in '{dataset_folder}'.")
+
 
 def dataset_check(tokenizer_name: str) -> str:
     """Checks and ensures datasets for a given tokenizer exist.
@@ -132,5 +154,10 @@ def dataset_check(tokenizer_name: str) -> str:
         prepare_clickbait17_datasets(base_path=os.path.join(dataset_main, "raw"), tokenizer_name=tokenizer_name)
     return dataset_directory
 
+
 if __name__ == "__main__":
-    prepare_clickbait17_datasets()
+    # Example: prepare datasets only for the hybrid model
+    prepare_clickbait17_datasets(
+        tokenizer_name=HEADLINE_CONTENT_CONFIG["tokenizer_name"],
+        dataset_type="hybrid"
+    )

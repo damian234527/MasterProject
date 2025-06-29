@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import time
 from typing import Mapping, Sequence
-
+from config import GENERAL_CONFIG
 import numpy as np
 import pandas as pd
 from sklearn.metrics import (
@@ -40,7 +40,7 @@ def evaluate_clickbait_predictions(
     y_true: Sequence[float],
     y_pred: Sequence[float],
     *,
-    threshold: float = 0.5,
+    threshold: float = GENERAL_CONFIG["clickbait_threshold"],
     save_path: str | None = None,
     verbose: bool = True,
 ) -> Mapping[str, float]:

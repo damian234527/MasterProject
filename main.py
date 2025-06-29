@@ -25,6 +25,7 @@ from headline_content_similarity import (
     HeadlineContentSimilarity
 )
 from headline_content_evaluation import evaluate_clickbait_predictions
+from headline_content_feature_extractor import FeatureExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -140,13 +141,12 @@ class ClickbaitAndSimilarityDetector:
     def __init__(self,
                  headline_model_path: str = HEADLINE_CONFIG["model_path"],
                  headline_model_type: str = HEADLINE_CONFIG["model_type"],
-                 headline_content_model_path: str = HEADLINE_CONTENT_CONFIG["model_path_default"][0],
-                 headline_content_model_type: str = HEADLINE_CONTENT_CONFIG["model_type"][0],
+                 headline_content_model_path: str = HEADLINE_CONTENT_CONFIG["model_path_default"][1],
+                 headline_content_model_type: str = HEADLINE_CONTENT_CONFIG["model_type"][1],
                  headline_content_transformer: str = HEADLINE_CONTENT_CONFIG["model_name"]):
         self.headline_classifier = HeadlineClassifier(model_path=headline_model_path, model_type=headline_model_type)
         self.headline_classifier.load_model()
-        # NEW: Instantiate the feature extractor
-        self.feature_extractor = ArticleFeatureExtractor()
+        self.feature_extractor = FeatureExtractor()
 
         self.headline_content_type = headline_content_model_type
         self.headline_content_path = headline_content_model_path
@@ -158,6 +158,7 @@ class ClickbaitAndSimilarityDetector:
                 model_name_or_path=headline_content_model_path
             )
         )
+
     def preprocess_text(self, text: str) -> str:
         doc = self.spacy_nlp(text.lower())
         return " ".join(token.lemma_ for token in doc if token.is_alpha and not token.is_stop)
@@ -172,7 +173,12 @@ class ClickbaitAndSimilarityDetector:
         prediction = score >= 0.5  # Assuming 0.5 threshold
         return prediction, score
 
-    def compare_similarity(self, headline: str, content: str) -> dict:
+    # MODIFIED: Added 'post' argument and implemented the method body
+    def compare_similarity(self, headline: str, content: str, post: str = None, headline_score: float = None) -> dict:
+        """
+        Calculates similarity scores using multiple methods.
+        The 'post' text is used by the transformer model.
+        """
         methods = {
             "TF-IDF Cosine": CosineSimilarityTFIDF(),
             "Transformer Embedding": TransformerEmbeddingSimilarity(model_name=self.headline_content_transformer),
@@ -180,34 +186,64 @@ class ClickbaitAndSimilarityDetector:
                                                                model_name_or_path=self.headline_content_path)
         }
 
-    def get_headline_content_score(self, headline: str, content: str) -> float:
-        return self.headline_content_comparator.compare(headline, content)
-
         scores = {}
         for method_name, method in methods.items():
             comparator = HeadlineContentSimilarity(method)
-            score = comparator.compare(headline, content)
+            # MODIFIED: Pass the post to the comparator
+            score = comparator.compare(headline, content, post=post)
             scores[method_name] = round(score, 4)
             logging.info(f"{method_name} Similarity Score: {score:.4f}")
         return scores
 
-    def extract_features(self, headline: str, content: str) -> dict:
-        """NEW: Wrapper to call the feature extractor."""
-        return self.feature_extractor.extract(headline, content)
+    # MODIFIED: Added 'post' argument
+    def get_headline_content_score(self, headline: str, content: str, post: str = None, headline_score: float = None) -> float:
+        """Calculates the similarity score using the primary headline-content model."""
+        # MODIFIED: Pass the post and headline_score to the comparator
+        return self.headline_content_comparator.compare(headline, content, post=post, headline_score=headline_score)
+
+    def extract_features(self, post: str, headline: str, content: str) -> dict:
+        """Wrapper to call the centralized feature extractor and return a dictionary."""
+        # Returns a dictionary of all 22 features for display.
+        return self.feature_extractor.extract(post, headline, content, as_dict=True)
+
 
 
 # ================ Main Program (Heavily Updated) ================
 
-def main(urls: list[str] | str, model_type: str = "logistic"):
-    if isinstance(urls, str):
-        urls = [urls]
+def main(articles: list[dict], model_type: str = "logistic"):
+    """
+    Processes a list of articles, analyzes them for clickbait, and displays the results.
+
+    Args:
+        articles (list[dict]): A list of dictionaries. Each dictionary must have a 'url' key,
+                               and can optionally have a 'post' key with the social media text.
+        model_type (str): The type of headline classifier to use.
+    """
+    # MODIFIED: Added robust input handling for different formats
+    if isinstance(articles, dict):
+        articles = [articles]
+    elif isinstance(articles, str):
+        articles = [{'url': articles}]
+    elif isinstance(articles, list) and all(isinstance(i, str) for i in articles):
+        articles = [{'url': url} for url in articles]
 
     detector = ClickbaitAndSimilarityDetector(headline_model_type=model_type)
     results = []
     article_features = {}
 
-    for url in urls:
+    for article_data in articles:
+        url = article_data.get("url")
+        post = article_data.get("post")  # MODIFIED: Get the post text
+
+        if not url:
+            logging.warning(f"Skipping article data with no URL: {article_data}")
+            continue
+
         print(f"\n\n{'=' * 25}\nProcessing URL: {url}\n{'=' * 25}")
+        # MODIFIED: Display the post if it exists
+        if post:
+            print(f"Provided Post: '{post}'\n")
+
         scraper_successful = False
         headline = ""
         content = ""
@@ -234,18 +270,17 @@ def main(urls: list[str] | str, model_type: str = "logistic"):
                 logging.warning(
                     f"Content very short for URL {url}; length: {len(content.split())} words). May affect analysis.")
 
-            # UPDATED: Get both boolean and score
             is_clickbait, clickbait_score = detector.detect_clickbait(headline)
             clickbait_status = "CLICKBAIT" if is_clickbait else "NOT CLICKBAIT"
             print(f"📰 Headline: '{headline}'")
             print(f"🎯 Clickbait Detection Result: {clickbait_status} (Score: {clickbait_score:.4f})\n")
 
-            # Get similarity scores and features
-            similarity_scores = detector.compare_similarity(headline, content)
-            article_features = detector.extract_features(headline, content)
+            similarity_scores = detector.compare_similarity(headline, content, post=post, headline_score=clickbait_score)
+            article_features = detector.extract_features(post, headline, content)
 
             result = {
                 "URL": url,
+                "Post": post if post else "N/A",  # MODIFIED: Add post to results
                 "Headline": headline,
                 "Status": "Processed",
                 "Error": "None",
@@ -257,6 +292,7 @@ def main(urls: list[str] | str, model_type: str = "logistic"):
         else:
             result = {
                 "URL": url,
+                "Post": post if post else "N/A",  # MODIFIED: Add post to results
                 "Headline": "N/A",
                 "Status": "Failed",
                 "Error": error_message,
@@ -265,33 +301,27 @@ def main(urls: list[str] | str, model_type: str = "logistic"):
             }
         results.append(result)
 
-    # UPDATED: Use Pandas to present final results
     if results:
-        # Create a comprehensive DataFrame with all results
         df = pd.DataFrame(results)
 
-        # Define columns for different tables
-        # Ensure columns exist before trying to use them
-        base_cols = ["URL", "Clickbait", "Clickbait Score"]
+        # MODIFIED: Added 'Post' to the list of base columns
+        base_cols = ["URL", "Post", "Clickbait", "Clickbait Score"]
         similarity_cols = [col for col in ["TF-IDF Cosine", "Transformer Embedding", "Clickbait Transformer Model"] if
                            col in df.columns]
         feature_cols = [col for col in article_features.keys() if col in df.columns]
 
-        # Display the main results table
         display_cols = base_cols + similarity_cols
         print("\n\n" + "=" * 50)
         print("📊 HEADLINE ANALYSIS SUMMARY")
         print("=" * 50)
         print(df[display_cols].to_string())
 
-        # Display the features table
         print("\n\n" + "=" * 50)
         print("📝 EXTRACTED ARTICLE FEATURES")
         print("=" * 50)
         feature_display_cols = ["URL"] + feature_cols
         print(df[feature_display_cols].to_string())
 
-        # If more than one URL was processed, show aggregate stats
         if len(df[df['Status'] == 'Processed']) > 1:
             numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
             if numeric_cols:
@@ -301,7 +331,6 @@ def main(urls: list[str] | str, model_type: str = "logistic"):
                 print("=" * 50)
                 print(stats_df.to_string())
 
-        # Save ALL collected data to a single timestamped CSV
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"headline_analysis_results_{timestamp}.csv"
         df.to_csv(filename, index=False)
@@ -310,7 +339,7 @@ def main(urls: list[str] | str, model_type: str = "logistic"):
 
 # ================ NEW: Evaluation Function ================
 
-def evaluate_on_test_set(csv_path: str, model_type: str = "logistic"):
+def evaluate_on_test_set(csv_path: str, model_type: str = "logistic"): #
     """
     Runs an evaluation on a local test CSV file, calculates a weighted score,
     and prints the final performance metrics.
@@ -318,88 +347,112 @@ def evaluate_on_test_set(csv_path: str, model_type: str = "logistic"):
     print(f"Loading test data from: {csv_path}")
     try:
         df = pd.read_csv(csv_path)
+        # MODIFIED: Ensure 'post' column exists, fill NaNs with empty string
+        if 'post' not in df.columns:
+            df['post'] = ''
+        df['post'] = df['post'].fillna('')
         df = df.dropna(subset=['headline', 'content', 'clickbait_score']).reset_index(drop=True)
     except FileNotFoundError:
         logger.error(f"Test file not found at '{csv_path}'. Please check the path.")
         return
 
-    detector = ClickbaitAndSimilarityDetector(headline_model_type=model_type)
+    detector = ClickbaitAndSimilarityDetector(headline_model_type=model_type) #
 
     y_true = []
-    y_pred_weighted = []
+    y_pred_final = []
 
-    # Weights for the final score
+    # Weights are now only used for the standard model
     HEADLINE_MODEL_WEIGHT = 1
     CONTENT_MODEL_WEIGHT = 2
     TOTAL_WEIGHT = HEADLINE_MODEL_WEIGHT + CONTENT_MODEL_WEIGHT
 
     print("Processing test set to generate predictions...")
+    if detector.headline_content_type == 'hybrid':
+        print("Evaluation Mode: Hybrid Model (direct output).")
+    else:
+        print("Evaluation Mode: Standard Model (weighted average).")
+
     for _, row in tqdm(df.iterrows(), total=df.shape[0], desc="Evaluating"):
         headline = row['headline']
         content = row['content']
+        post = row['post']  # MODIFIED: Get the post from the CSV
         ground_truth_score = row['clickbait_score']
 
-        # Get score from the headline-only model
-        _, headline_score = detector.detect_clickbait(headline)
+        _, headline_score = detector.detect_clickbait(headline) #
+        # MODIFIED: Pass the 'post' to the content score function
+        content_score = detector.get_headline_content_score(headline, content, post=post, headline_score=headline_score) #
 
-        # Get score from the headline-content transformer model
-        content_score = detector.get_headline_content_score(headline, content)
-
-        # Ensure both scores are valid numbers before calculating the weighted average
         if pd.isna(headline_score) or pd.isna(content_score):
             logger.warning(f"Skipping row due to NaN score. Headline: '{headline[:30]}...'")
             continue
 
-        # Calculate the weighted average score
-        weighted_score = (
-                                 (headline_score * HEADLINE_MODEL_WEIGHT) +
-                                 (content_score * CONTENT_MODEL_WEIGHT)
-                         ) / TOTAL_WEIGHT
+        # MODIFIED: Conditional scoring based on model type
+        final_score = 0.0
+        if detector.headline_content_type == 'hybrid':
+            # For the hybrid model, its output, which has already used the headline_score
+            # as a feature, is the final score.
+            final_score = content_score
+        else:
+            # For standard models, perform the weighted average.
+            weighted_score = (
+                                     (headline_score * HEADLINE_MODEL_WEIGHT) +
+                                     (content_score * CONTENT_MODEL_WEIGHT)
+                             ) / TOTAL_WEIGHT
+            final_score = weighted_score
 
         y_true.append(ground_truth_score)
-        y_pred_weighted.append(weighted_score)
+        y_pred_final.append(final_score)
 
     print("\n" + "=" * 50)
-    print("      FINAL WEIGHTED MODEL PERFORMANCE METRICS")
+    if detector.headline_content_type == 'hybrid':
+        print("      FINAL HYBRID MODEL PERFORMANCE METRICS")
+    else:
+        print("      FINAL WEIGHTED MODEL PERFORMANCE METRICS")
     print("=" * 50)
 
-    if not y_true or not y_pred_weighted:
+    if not y_true or not y_pred_final:
         print("No valid scores were generated. Cannot compute metrics.")
         return
 
-    # Use the provided evaluation function to display metrics
     evaluate_clickbait_predictions(
         y_true=y_true,
-        y_pred=y_pred_weighted,
+        y_pred=y_pred_final,
         verbose=True
     )
     print("=" * 50)
 
 
 if __name__ == "__main__":
-    # Example usage with multiple URLs to test aggregation
-    debug_urls = [
-        "https://www.buzzfeed.com/stephaniemcneal/a-couple-did-a-stunning-photo-shoot-with-their-baby-after-le",
-        "https://apnews.com/live/israel-iran-attack"
+    # MODIFIED: Example usage now uses a list of dictionaries with 'url' and 'post'
+    debug_articles = [
+        {
+            "url": "https://www.buzzfeed.com/stephaniemcneal/a-couple-did-a-stunning-photo-shoot-with-their-baby-after-le",
+            "post": "This Couple's Photoshoot With Their Baby Is Going Viral For The Most Amazing Reason"
+        },
+        {
+            "url": "https://apnews.com/live/israel-iran-attack",
+            # This article has no associated "post"
+        }
     ]
 
     if len(sys.argv) > 1:
-        # Assuming last argument is model_type if present, otherwise all are URLs
+        # Command-line processing now assumes all args are URLs and converts them to the new format
         if sys.argv[-1] in ["logistic", "naive_bayes", "random_forest", "svm"]:
             urls_from_args = sys.argv[1:-1]
             model_type_from_args = sys.argv[-1]
         else:
             urls_from_args = sys.argv[1:]
             model_type_from_args = "logistic"  # default
-        main(urls_from_args, model_type_from_args)
+
+        # MODIFIED: Convert list of URL strings to the expected list of dictionaries
+        articles_from_args = [{'url': url} for url in urls_from_args]
+        main(articles_from_args, model_type_from_args)
     else:
-        # main(debug_urls, model_type="logistic")
+        # Run the main analysis function with the debug examples
+        print("\n--- Running Main Analysis on Debug Articles ---")
+        # main(debug_articles)
 
-        # Evaluation on the Clickbait17 test set
+        # Run the evaluation on the Clickbait17 test set
         print("\n--- Running Evaluation on Clickbait17 Test Set ---")
-
-        # IMPORTANT: Replace this with the correct path to your test file.
-        # This path assumes the 'data' directory is at the same level as 'main.py'
-        test_csv_path = "data/clickbait17/models/sentence-transformers_all-MiniLM-L6-v2/clickbait17_test.csv"
-
-        evaluate_on_test_set(csv_path=test_csv_path, model_type="logistic")
+        test_csv_path = "data/clickbait17/models/sentence-transformers_all-MiniLM-L6-v2/clickbait17_test_features.csv"
+        evaluate_on_test_set(csv_path=test_csv_path)
