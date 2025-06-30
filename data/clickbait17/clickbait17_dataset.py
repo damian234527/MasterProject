@@ -103,7 +103,6 @@ class Clickbait17FeatureAugmentedDataset(ClickbaitDataset):
         self.feature_means = torch.zeros(features_number)
         self.feature_stds = torch.ones(features_number)
 
-    # MODIFIED: Added headline_score as a required parameter
     def _extract_features(self, post: str, headline: str, content: str, headline_score: float,
                           normalise: bool = False) -> List[float]:
         post_words = word_tokenize(post.lower()) if post else []

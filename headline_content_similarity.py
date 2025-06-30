@@ -123,17 +123,15 @@ class ClickbaitModelScore(SimilarityMethod):
             logger.warning("Inner model for ClickbaitModelScore is not loaded.")
             return float('nan')
         try:
-            effective_post = post if post else headline
 
-            # MODIFIED: If the model is the hybrid version, pass the headline_score to its predict method.
             if isinstance(self.model, ClickbaitFeatureEnhancedTransformer):
                 if headline_score is None:
                     raise ValueError("The hybrid model requires a headline_score, but none was provided.")
-                return float(self.model.predict(post=effective_post, headline=headline, content=content,
+                return float(self.model.predict(post=post, headline=headline, content=content,
                                                 headline_score=headline_score))
             else:
                 # Standard model is called without the extra parameter.
-                return float(self.model.predict(post=effective_post, headline=headline, content=content))
+                return float(self.model.predict(post=post, headline=headline, content=content))
 
         except Exception as e:
             logger.error(f"Prediction failed for headline '{headline[:30]}...': {e}", exc_info=True)
@@ -216,30 +214,18 @@ if __name__ == "__main__":
     # print(tets.model.test("./data/clickbait17/models/bert-base-uncased/clickbait17_test.csv"))
     for transformer in transformers:
         directory = get_dataset_folder(transformer)
-        # standard = ClickbaitModelScore(model_type="standard", model_name_or_path=HEADLINE_CONTENT_CONFIG["model_name"])
-        #standard = ClickbaitModelScore(model_type="standard", model_name_or_path="models/standard_sentence-transformers_all-MiniLM-L6-v2_1750613557/best_model")
-
-        # standard.model.train(os.path.join(directory, "clickbait17_train.csv"),
-        #                     os.path.join(directory, "clickbait17_validation.csv"))
-        #logger.info("Standard")
-        # standard.model.train(os.path.join(directory, "clickbait17_train.csv"), sampling_strategy="oversample")
+        standard = ClickbaitModelScore(model_type="standard", model_name_or_path=HEADLINE_CONTENT_CONFIG["model_name"], output_directory="models/tets")
+        # standard.model.load_model("models/standard_sentence-transformers_all-MiniLM-L6-v2_1750613557/best_model")
+        # standard.model.train(os.path.join(directory, "clickbait17_train.csv"), os.path.join(directory, "clickbait17_validation.csv"))
+        standard.model.train(os.path.join(directory, "clickbait17_train.csv"), sampling_strategy="oversample")
         # sampling_strategy="oversample",
         # use_weighted_loss=True
-        #logger.info("")
-        # standard.model.test(os.path.join(directory, "clickbait17_test.csv"))
+        standard.model.test(os.path.join(directory, "clickbait17_test.csv"))
 
-        hybrid = ClickbaitModelScore(model_type="hybrid", model_name_or_path=HEADLINE_CONTENT_CONFIG["model_name"])
-        #hybrid.model.load_model("models/hybrid/best_model")
-        # --------------------------------------------
-        # UNTRAINED
-        #print("UNTRAINED")
-        #print("STANDARD: ")
-        #standard.model.test(os.path.join(directory, "clickbait17_test.csv"))
-        #print("HYBRID: ")
-        hybrid.model.train(os.path.join(directory, "clickbait17_train_features.csv"))
-        hybrid.model.test(os.path.join(directory, "clickbait17_test_features.csv"))
-        # --------------------------------------------
-        # TRAINED
+        #hybrid = ClickbaitModelScore(model_type="hybrid", model_name_or_path=HEADLINE_CONTENT_CONFIG["model_name"])
+        #hybrid.model.train(os.path.join(directory, "clickbait17_train_features.csv"))
+        #hybrid.model.test(os.path.join(directory, "clickbait17_test_features.csv"))
+
         #standard.model.train(os.path.join(directory, "clickbait17_train.csv"), os.path.join(directory, "clickbait17_validation.csv"))
         #standard.model.test(os.path.join(directory, "clickbait17_test.csv"))
         #hybrid.model.train(os.path.join(directory, "clickbait17_train_features.csv"), os.path.join(directory, "clickbait17_validation_features.csv"))

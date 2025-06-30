@@ -29,11 +29,10 @@ from headline_content_feature_extractor import FeatureExtractor
 
 logger = logging.getLogger(__name__)
 
-# Ensure necessary NLTK data is available
 try:
     nltk.data.find("corpora/stopwords")
     nltk.data.find("tokenizers/punkt_tab")
-    nltk.data.find("vader_lexicon")
+    nltk.data.find("sentiment/vader_lexicon")
 except LookupError:
     nltk.download("stopwords")
     nltk.download("punkt_tab")
@@ -89,52 +88,6 @@ class ArticleScraper:
             return self.article_obj.text
         return getattr(self, 'content', "")
 
-
-# ================ NEW: Feature Extractor ================
-# This class is adapted from your clickbait17_dataset.py to be used for single articles.
-
-class ArticleFeatureExtractor:
-    def __init__(self):
-        self.stop_words = set(stopwords.words("english"))
-        self.sentiment_analyzer = SentimentIntensityAnalyzer()
-        # Basic regex for clickbait-y phrases for feature counting
-        clickbait_terms = [
-            "you won't believe", "what happens next", "the reason why", "secret to",
-            "shocked", "reveals", "hidden", "amazing"
-        ]
-        pattern = r"\b(?:%s)\b" % "|".join(clickbait_terms)
-        self.clickbait_regex = re.compile(pattern, re.IGNORECASE)
-
-    def extract(self, headline: str, content: str) -> dict:
-        """Extracts a dictionary of features from the headline and content."""
-        headline_words = headline.split()
-        content_words = content.split()
-
-        headline_length_words = len(headline_words)
-        content_length_words = len(content_words)
-
-        features = {
-            "Headline Words": headline_length_words,
-            "Content Words": content_length_words,
-            "Headline-Content Word Ratio": headline_length_words / max(content_length_words, 1),
-            "Exclamation Marks in Headline": headline.count("!"),
-            "Question Marks in Headline": headline.count("?"),
-            "Uppercase Ratio in Headline": sum(c.isupper() for c in headline) / max(len(headline), 1),
-            "Stopword Ratio in Headline": sum(w.lower() in self.stop_words for w in headline_words) / max(
-                headline_length_words, 1),
-            "Clickbait Phrase Count": len(self.clickbait_regex.findall(headline)),
-            "Sentiment Polarity (Headline)": self.sentiment_analyzer.polarity_scores(headline)["compound"],
-            "Sentiment Polarity (Content)": self.sentiment_analyzer.polarity_scores(content)["compound"]
-        }
-
-        # Round float values for cleaner display
-        for key, value in features.items():
-            if isinstance(value, float):
-                features[key] = round(value, 4)
-
-        return features
-
-
 # ================ Detector (Updated) ================
 
 class ClickbaitAndSimilarityDetector:
@@ -186,11 +139,19 @@ class ClickbaitAndSimilarityDetector:
                                                                model_name_or_path=self.headline_content_path)
         }
 
+        kwargs = {
+            'headline': headline,
+            'content': content,
+            'post': post
+        }
+        if self.headline_content_type == "hybrid":
+            kwargs['headline_score'] = headline_score
         scores = {}
+
         for method_name, method in methods.items():
             comparator = HeadlineContentSimilarity(method)
             # MODIFIED: Pass the post to the comparator
-            score = comparator.compare(headline, content, post=post)
+            score = comparator.compare(**kwargs)
             scores[method_name] = round(score, 4)
             logging.info(f"{method_name} Similarity Score: {score:.4f}")
         return scores
@@ -450,9 +411,9 @@ if __name__ == "__main__":
     else:
         # Run the main analysis function with the debug examples
         print("\n--- Running Main Analysis on Debug Articles ---")
-        # main(debug_articles)
+        main(debug_articles)
 
         # Run the evaluation on the Clickbait17 test set
         print("\n--- Running Evaluation on Clickbait17 Test Set ---")
-        test_csv_path = "data/clickbait17/models/sentence-transformers_all-MiniLM-L6-v2/clickbait17_test_features.csv"
-        evaluate_on_test_set(csv_path=test_csv_path)
+        # test_csv_path = "data/clickbait17/models/sentence-transformers_all-MiniLM-L6-v2/clickbait17_test_features.csv"
+        # evaluate_on_test_set(csv_path=test_csv_path)

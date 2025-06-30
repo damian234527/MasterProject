@@ -229,7 +229,7 @@ class ClickbaitTransformer(ClickbaitModelBase):
         self.weight_decay = weight_decay
         self.dropout_rate = dropout_rate
         self.fp16 = fp16
-        self.output_directory = f"{output_directory}_{self.model_identifier.replace("/", "_")}_{int(time.time())}"
+        self.output_directory = f"{output_directory}_{self.model_identifier.replace("/", "_")}_{time.strftime("%Y_%m_%d_%H_%M_%S", time.gmtime())}"
         self.trainer = None
 
     def _load_data(self, data: Union[str, pd.DataFrame]) -> Dataset:
@@ -481,13 +481,14 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
             return SequenceClassifierOutput(loss=loss, logits=logits)
 
     class HybridDataCollator:
-        def __init__(self, tokenizer):
+        def __init__(self, tokenizer, max_length: int):
             self.tokenizer = tokenizer
+            self.max_length = max_length
 
         def __call__(self, features_list):
             input_features_dict = [{k: f[k] for k in ["input_ids", "attention_mask"]} for f in features_list]
             batch = self.tokenizer.pad(input_features_dict, return_tensors="pt", padding="max_length",
-                                       max_length=self.tokenizer.model_max_length)
+                                       max_length=min(self.max_length, self.tokenizer.model_max_length))
             batch["features"] = torch.stack([f["features"] for f in features_list])
             if "label" in features_list[0]:
                 batch["labels"] = torch.tensor([f["label"] for f in features_list], dtype=torch.float)
@@ -667,7 +668,7 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
                 args=training_args,
                 train_dataset=train_dataset,
                 eval_dataset=val_dataset,
-                data_collator=self.HybridDataCollator(self.tokenizer),
+                data_collator=self.HybridDataCollator(self.tokenizer, self.length_max),
                 **trainer_kwargs
             )
             print(f"Starting hybrid model training. Output directory: {self.output_directory}")

@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clickbait Detector</title>
+    <style>
+        body { font-family: sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; color: #333; }
+        h1 { text-align: center; }
+        form { display: flex; flex-direction: column; gap: 15px; }
+        input[type="url"], textarea { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-family: sans-serif; }
+        textarea { resize: vertical; min-height: 80px; }
+        button { padding: 10px 20px; background-color: #007BFF; color: white; border: none; border-radius: 4px; cursor: pointer; align-self: flex-start; }
+        button:hover { background-color: #0056b3; }
+    </style>
+</head>
+<body>
+    <h1>Clickbait Detection Service</h1>
+    <p>Enter the URL of a news article to analyze it. You can also provide the associated social media post text for a more detailed analysis.</p>
+    <form action="/analyze" method="post">
+        <input type="url" name="url" placeholder="Article URL (Required)" required>
+        <textarea name="post" placeholder="Social Media Post Text (Optional)"></textarea>
+        <button type="submit">Analyze</button>
+    </form>
+</body>
+</html>

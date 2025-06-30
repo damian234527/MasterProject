@@ -42,7 +42,7 @@ HEADLINE_CONTENT_MODELS_PRETRAINED = [
     "microsoft/deberta-v3-small", # dobre
     "sentence-transformers/all-MiniLM-L6-v2", # takie sobie ale szybkie
     # "khalidalt/DeBERTa-v3-large-mnli", # dużo VRAMu, trzeba batch size do 8 zmniejszyć i czekać 6 godzin
-    "distilroberta-base",
+    "distilroberta-base", # dobre i dosyć szybkie
     "allenai/longformer-base-4096",
     # TODO add sentence transformer
     # ALBERT
