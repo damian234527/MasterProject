@@ -1,50 +1,49 @@
-# loss_functions.py
+# loss_functions.py (Revised for Continuous Scores)
 import torch
 from torch import nn
 from transformers import Trainer
 import pandas as pd
 from collections import Counter
 import logging
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
 
-def calculate_class_weights(train_csv_path: str) -> dict:
+def calculate_class_weights(train_csv_path: str, threshold: float = 0.5, strength: float = 0.5) -> dict:
     """
-    Calculates inverse frequency class weights from the original training data.
-    The weights are normalized to prevent exploding gradients.
+    Calculates class weights for binned scores with a tunable strength.
 
     Args:
-        train_csv_path (str): Path to the original (non-resampled) training CSV.
+        train_csv_path (str): Path to the original training CSV.
+        threshold (float): The value to split scores into two bins (0 and 1).
+        strength (float): Controls the intensity of weighting (0.0 to 1.0).
 
     Returns:
-        dict: A dictionary mapping class labels (scores) to their calculated weights.
+        dict: A dictionary mapping bin labels {0, 1} to their weights.
     """
-    logger.info("Calculating class weights for weighted loss...")
+    logger.info(f"Calculating class weights with threshold {threshold} and strength {strength}...")
+    strength = max(0.0, min(1.0, strength))
 
     try:
-        original_train_df = pd.read_csv(train_csv_path)
-        # Round scores to handle potential float inaccuracies and group them
-        score_counts = Counter(round(score, 2) for score in original_train_df['clickbait_score'])
-
-        if not score_counts:
-            logger.warning("Could not calculate class weights, training data might be empty.")
+        df = pd.read_csv(train_csv_path)
+        # Bin scores into two classes based on the threshold
+        binned_labels = (df['clickbait_score'] >= threshold).astype(int)
+        score_counts = Counter(binned_labels)
+        if not score_counts or len(score_counts) < 2:
+            logger.warning("Could not calculate weights; not enough class diversity.")
             return None
 
         total_samples = sum(score_counts.values())
+        num_classes = len(score_counts)
 
-        # Calculate inverse frequency weights
-        class_weights = {
-            score: total_samples / count
-            for score, count in score_counts.items()
-        }
+        raw_weights = {label: total_samples / count for label, count in score_counts.items()}
+        sum_of_weights = sum(raw_weights.values())
+        normalized_weights = {label: (w * num_classes) / sum_of_weights for label, w in raw_weights.items()}
+        final_weights = {label: 1.0 * (1 - strength) + w * strength for label, w in normalized_weights.items()}
 
-        # Normalize weights to a [0, 1] range to improve stability
-        max_weight = float(max(class_weights.values()))
-        class_weights = {score: weight / max_weight for score, weight in class_weights.items()}
-
-        logger.info(f"Calculated class weights: {class_weights}")
-        return class_weights
+        logger.info(f"Calculated final class weights for bins: {final_weights}")
+        return final_weights
 
     except FileNotFoundError:
         logger.error(f"Training CSV not found at {train_csv_path}. Cannot calculate weights.")
@@ -53,48 +52,29 @@ def calculate_class_weights(train_csv_path: str) -> dict:
 
 class WeightedLossTrainer(Trainer):
     """
-    A custom Hugging Face Trainer that applies pre-calculated class weights
-    to the regression loss function (MSE).
+    A custom Trainer that applies weights to binned regression targets.
     """
-
-    def __init__(self, *args, class_weights=None, **kwargs):
+    def __init__(self, *args, class_weights=None, weight_threshold: float = 0.5, **kwargs):
         super().__init__(*args, **kwargs)
-        if class_weights is not None:
-            self.class_weights_map = class_weights
-            logger.info("WeightedLossTrainer initialized with custom class weights.")
-        else:
-            self.class_weights_map = None
+        self.class_weights_map = class_weights
+        self.weight_threshold = weight_threshold # Store the threshold for use in loss computation
+        if class_weights:
+            logger.info(f"WeightedLossTrainer initialized with weights and threshold {self.weight_threshold}.")
 
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
-        """
-        Overrides the default loss computation to apply weights.
-        """
-        # The base Trainer calls the model's forward pass.
-        # We get the outputs (logits) to calculate a custom loss.
         outputs = model(**inputs)
         logits = outputs.get("logits")
         labels = inputs.get("labels")
 
-        # Proceed with weighted loss only if weights and labels are available
         if labels is not None and self.class_weights_map is not None:
-            # Map labels in the current batch to their corresponding weights
-            # Rounding the label is important to match the keys in the weight map
+            # Determine the weight for each label by binning it on the fly
             weights = torch.tensor(
-                [self.class_weights_map.get(round(label.item(), 2), 1.0) for label in labels],
+                [self.class_weights_map[1] if label.item() >= self.weight_threshold else self.class_weights_map[0] for label in labels],
                 device=labels.device
             )
-
-            # Use MSELoss with no reduction to get per-element losses
             loss_fct = nn.MSELoss(reduction='none')
             loss = loss_fct(logits.squeeze(-1), labels.squeeze(-1))
-
-            # Apply weights element-wise and then compute the mean
             weighted_loss = (loss * weights).mean()
-
             return (weighted_loss, outputs) if return_outputs else weighted_loss
-
-        # If no weights, fall back to the model's own loss calculation or the default behavior
-        if outputs.loss is not None:
-            return (outputs.loss, outputs) if return_outputs else outputs.loss
 
         return super().compute_loss(model, inputs, return_outputs)

@@ -21,7 +21,7 @@ HEADLINE_CONTENT_CONFIG = {
 
 HEADLINE_CONFIG = {
     "model_type": "naive_bayes",
-    "model_path": "models/headline_models/naive_bayes_best.joblib",
+    "model_path": "models/headline_models/naive_bayes.joblib",
 
 }
 

@@ -46,7 +46,7 @@ def train_headline_content_models(tokenizer_name: str = HEADLINE_CONTENT_CONFIG[
         )
         transformer.train(train_csv_basic, sampling_strategy = sampling_strategy)
 
-    elif model_type == "hybrid" or  "both":
+    if model_type == "hybrid" or  "both":
         train_csv_features, val_csv_features = get_feature_csv_paths(tokenizer_name)
         logging.info("\nTraining ClickbaitFeatureEnhancedTransformer (Hybrid Model)...")
         hybrid = ClickbaitFeatureEnhancedTransformer(
@@ -70,4 +70,4 @@ if __name__ == "__main__":
     # train_headline_classifiers()
     # sampling_strategy="oversample",
     # use_weighted_loss=True
-    train_headline_content_models(model_type="hybrid")
+    train_headline_content_models(model_type="both")

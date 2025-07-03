@@ -5,10 +5,28 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Clickbait Detector</title>
     <style>
-        body { font-family: sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; color: #333; }
+        body {
+            font-family: sans-serif;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 0 20px;
+            /* Changed colors */
+            background-color: #444444;
+            color: lightgray;
+        }
         h1 { text-align: center; }
         form { display: flex; flex-direction: column; gap: 15px; }
-        input[type="url"], textarea { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-family: sans-serif; }
+        input[type="url"], textarea {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 10px;
+            /* Adjusted for dark theme */
+            border: 1px solid #666;
+            background-color: #555;
+            color: #f0f0f0;
+            border-radius: 4px;
+            font-family: sans-serif;
+        }
         textarea { resize: vertical; min-height: 80px; }
         button { padding: 10px 20px; background-color: #007BFF; color: white; border: none; border-radius: 4px; cursor: pointer; align-self: flex-start; }
         button:hover { background-color: #0056b3; }

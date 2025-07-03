@@ -18,7 +18,7 @@ from headline_content_models import (
     ClickbaitFeatureEnhancedTransformer
 )
 from headline_content_evaluation import evaluate_clickbait_predictions
-from data.clickbait17.clickbait17_utils import get_dataset_folder
+from data.clickbait17.clickbait17_utils import get_dataset_folder, combined_headline
 import logging_config
 import logging
 
@@ -46,6 +46,7 @@ class CosineSimilarityTFIDF(SimilarityMethod):
     @lru_cache(maxsize=128)
     # MODIFIED: Signature updated to match the abstract base class
     def compute_score(self, headline: str, content: str, post: str = None, headline_score: float = None) -> float:
+        headline = combined_headline(headline=headline, post=post)
         if not headline or not content:
             logger.warning("No headline or content provided.")
             return 0.0
@@ -58,7 +59,7 @@ class CosineSimilarityTFIDF(SimilarityMethod):
 
 class TransformerEmbeddingSimilarity(SimilarityMethod):
 
-    def __init__(self, model_name: str = HEADLINE_CONTENT_CONFIG["model_name"], max_length: int = 512):
+    def __init__(self, model_name: str = HEADLINE_CONTENT_CONFIG["model_name"], max_length: int = HEADLINE_CONTENT_CONFIG["length_max"]):
         self.model_name = model_name
         self.max_length = max_length
         self.tokenizer = None
@@ -88,6 +89,7 @@ class TransformerEmbeddingSimilarity(SimilarityMethod):
 
     # MODIFIED: Signature updated to match the abstract base class
     def compute_score(self, headline: str, content: str, post: str = None, headline_score: float = None) -> float:
+        headline = combined_headline(headline=headline, post=post)
         h_embed = self._get_embedding(headline)
         c_embed = self._get_embedding(content)
         if h_embed is None or c_embed is None:
@@ -214,17 +216,17 @@ if __name__ == "__main__":
     # print(tets.model.test("./data/clickbait17/models/bert-base-uncased/clickbait17_test.csv"))
     for transformer in transformers:
         directory = get_dataset_folder(transformer)
-        standard = ClickbaitModelScore(model_type="standard", model_name_or_path=HEADLINE_CONTENT_CONFIG["model_name"], output_directory="models/tets")
-        # standard.model.load_model("models/standard_sentence-transformers_all-MiniLM-L6-v2_1750613557/best_model")
+        #standard = ClickbaitModelScore(model_type="standard", model_name_or_path=HEADLINE_CONTENT_CONFIG["model_name"], output_directory="models/tets")
+        #standard.model.load_model("models/transformer_sentence-transformers_all-MiniLM-L6-v2_sentence-transformers_all-MiniLM-L6-v2_2025_07_01_18_40_26/best_model")
         # standard.model.train(os.path.join(directory, "clickbait17_train.csv"), os.path.join(directory, "clickbait17_validation.csv"))
-        standard.model.train(os.path.join(directory, "clickbait17_train.csv"), sampling_strategy="oversample")
+        #standard.model.train(os.path.join(directory, "clickbait17_train.csv"), sampling_strategy="oversample")
         # sampling_strategy="oversample",
         # use_weighted_loss=True
-        standard.model.test(os.path.join(directory, "clickbait17_test.csv"))
+        #standard.model.test(os.path.join(directory, "clickbait17_test.csv"))
 
-        #hybrid = ClickbaitModelScore(model_type="hybrid", model_name_or_path=HEADLINE_CONTENT_CONFIG["model_name"])
-        #hybrid.model.train(os.path.join(directory, "clickbait17_train_features.csv"))
-        #hybrid.model.test(os.path.join(directory, "clickbait17_test_features.csv"))
+        hybrid = ClickbaitModelScore(model_type="hybrid", model_name_or_path=HEADLINE_CONTENT_CONFIG["model_name"])
+        hybrid.model.train(os.path.join(directory, "clickbait17_train_features.csv"), sampling_strategy="oversample", use_weighted_loss=True)
+        hybrid.model.test(os.path.join(directory, "clickbait17_test_features.csv"))
 
         #standard.model.train(os.path.join(directory, "clickbait17_train.csv"), os.path.join(directory, "clickbait17_validation.csv"))
         #standard.model.test(os.path.join(directory, "clickbait17_test.csv"))

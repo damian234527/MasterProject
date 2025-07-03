@@ -1,4 +1,5 @@
 import os
+import json
 import time
 import pandas as pd
 import numpy as np
@@ -12,6 +13,7 @@ from transformers import AutoTokenizer, AutoModel, AutoModelForSequenceClassific
     EarlyStoppingCallback, PreTrainedModel, AutoConfig, PretrainedConfig
 from typing import Union, List
 import string
+from scipy.stats import boxcox
 from torch import nn
 from data.clickbait17.clickbait17_dataset import Clickbait17Dataset, Clickbait17FeatureAugmentedDataset
 from headline_content_feature_extractor import FeatureExtractor
@@ -518,8 +520,11 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
         self.dropout_rate = dropout_rate
 
         self.feature_extractor = FeatureExtractor()
-        self.feature_means = None
-        self.feature_stds = None
+        # self.feature_means = None
+        # self.feature_stds = None
+        self.feature_median = None
+        self.feature_iqr = None
+        self.boxcox_lambdas = {}
 
         os.makedirs(self.output_directory, exist_ok=True)
 
@@ -600,16 +605,16 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
                 print("Error: Training dataset is empty. Aborting training.")
                 return
 
-            loaded_num_features = len(train_dataset.feature_means)
+            loaded_num_features = len(train_dataset.feature_median)
             if self.num_features != loaded_num_features:
                 print(f"Warning: num_features in config ({self.num_features}) does not match data ({loaded_num_features}). Using {loaded_num_features}.")
                 self.num_features = loaded_num_features
 
-            self.feature_means = train_dataset.feature_means.to(self.device)
-            self.feature_stds = train_dataset.feature_stds.to(self.device)
+            self.feature_median = train_dataset.feature_median.to(self.device)
+            self.feature_iqr = train_dataset.feature_iqr.to(self.device)
             if val_dataset:
-                val_dataset.feature_means = self.feature_means
-                val_dataset.feature_stds = self.feature_stds
+                val_dataset.feature_median = self.feature_median
+                val_dataset.feature_iqr = self.feature_iqr
 
             # Initialize the inner model, ensuring num_features is correct
             try:
@@ -626,8 +631,17 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
             wrapper_config.transformer_name_custom = self.model.custom_config["transformer_name"]
             wrapper_config.num_features_custom = self.model.custom_config["num_features"]
             wrapper_config.dropout_rate_custom = self.model.custom_config["dropout_rate"]
-            wrapper_config.feature_means = self.feature_means.cpu().tolist()
-            wrapper_config.feature_stds = self.feature_stds.cpu().tolist()
+            # wrapper_config.feature_means = self.feature_means.cpu().tolist()
+            # wrapper_config.feature_stds = self.feature_stds.cpu().tolist()
+            wrapper_config.feature_median = self.feature_median.cpu().tolist()
+            wrapper_config.feature_iqr = self.feature_iqr.cpu().tolist()
+
+            train_meta_path = train_csv.replace(".csv", "_metadata.json")
+            if os.path.exists(train_meta_path):
+                with open(train_meta_path, "r") as f:
+                    meta = json.load(f)
+                    self.boxcox_lambdas = meta.get("boxcox_lambdas", {})
+                    wrapper_config.boxcox_lambdas = self.boxcox_lambdas
 
             wrapper_model_for_trainer = self.HybridWrapperModel(
                 config=wrapper_config,
@@ -686,8 +700,10 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
             if not self.test_run:
                 config_to_save = self.trainer.model.config
                 print("Adding feature normalization stats to model config...")
-                config_to_save.feature_means = self.feature_means.cpu().tolist()
-                config_to_save.feature_stds = self.feature_stds.cpu().tolist()
+                # config_to_save.feature_means = self.feature_means.cpu().tolist()
+                # config_to_save.feature_stds = self.feature_stds.cpu().tolist()
+                config_to_save.feature_median = self.feature_median.cpu().tolist()
+                config_to_save.feature_iqr = self.feature_iqr.cpu().tolist()
 
                 print(f"Saving final best model to: {final_model_save_path}")
                 self.trainer.save_model(final_model_save_path)
@@ -702,7 +718,7 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
     def predict(self, post: str, headline: str, content: str, headline_score: float) -> float:
         if self.model is None:
             raise ValueError("Model has not been trained or loaded yet.")
-        if self.feature_means is None or self.feature_stds is None:
+        if self.feature_median is None or self.feature_iqr is None:
             raise ValueError("Feature normalization stats are not available. Train or load a model first.")
 
         self.model.to(self.device)
@@ -711,10 +727,24 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
         # Step 1: Get base 22 features and append the provided headline score.
         base_features = self.feature_extractor.extract(post, headline, content, as_dict=False)
         final_features = base_features + [headline_score]
+
+        # Apply Box-Cox transformation before scaling
+        if self.boxcox_lambdas:
+            feature_names = self.feature_extractor.feature_names + ["headline_score"]
+            for i, feature_name in enumerate(feature_names):
+                # The feature names in the lambda dict are "f1", "f2", etc.
+                feature_key = f"f{i+1}"
+                if feature_key in self.boxcox_lambdas:
+                    # Check for positivity before applying
+                    if final_features[i] > 0:
+                        final_features[i] = boxcox(final_features[i], lmbda=self.boxcox_lambdas[feature_key])
+
         features_tensor = torch.tensor(final_features, dtype=torch.float).to(self.device)
 
-        # Step 2: Normalize the 23 features.
-        features_normalised = (features_tensor - self.feature_means) / self.feature_stds
+        # Step 2: Normalize the features using Robust Scaler
+        iqr_safe = self.feature_iqr.clone()
+        iqr_safe[self.feature_iqr < 1e-5] = 1.0
+        features_normalised = (features_tensor - self.feature_median) / iqr_safe
         features_tensor = features_normalised.unsqueeze(0)  # Add batch dimension
 
         # Step 3: Combine text and tokenize
@@ -788,13 +818,19 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
             print(f"Tokenizer loaded from {model_path}.")
 
             # NEW: Load normalization stats from the config
-            if hasattr(wrapper_config, "feature_means") and hasattr(wrapper_config, "feature_stds"):
-                self.feature_means = torch.tensor(wrapper_config.feature_means, dtype=torch.float).to(self.device)
-                self.feature_stds = torch.tensor(wrapper_config.feature_stds, dtype=torch.float).to(self.device)
-                print("Feature normalization stats loaded from model config.")
+            if hasattr(wrapper_config, "feature_median") and hasattr(wrapper_config, "feature_iqr"):
+                self.feature_median = torch.tensor(wrapper_config.feature_median, dtype=torch.float).to(self.device)
+                self.feature_iqr = torch.tensor(wrapper_config.feature_iqr, dtype=torch.float).to(self.device)
+                print("Feature normalization stats (median/IQR) loaded from model config.")
             else:
                 print(
                     "Warning: Feature normalization stats (mean/std) not found in config. The 'predict' method will fail.")
+            if hasattr(wrapper_config, "boxcox_lambdas"):
+                self.boxcox_lambdas = wrapper_config.boxcox_lambdas
+                print("Box-Cox lambdas loaded from model config.")
+            else:
+                print("Info: No Box-Cox lambdas found in model config.")
+                self.boxcox_lambdas = {}
 
         except Exception as e:
             print(f"Failed to load model from {model_path}: {e}")
