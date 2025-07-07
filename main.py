@@ -15,7 +15,7 @@ from nltk.corpus import stopwords
 from nltk.sentiment import SentimentIntensityAnalyzer
 import re
 from tqdm import tqdm
-from config import ARTICLE_SCRAPING_CONFIG, HEADLINE_CONFIG, HEADLINE_CONTENT_CONFIG
+from config import ARTICLE_SCRAPING_CONFIG, HEADLINE_CONFIG, HEADLINE_CONTENT_CONFIG, GENERAL_CONFIG
 # Updated import to get the class, not the instance
 from headline_classifier import HeadlineClassifier
 from headline_content_similarity import (
@@ -121,9 +121,8 @@ class ClickbaitAndSimilarityDetector:
         Detects if a headline is clickbait.
         Returns a tuple: (is_clickbait_boolean, clickbait_probability_score)
         """
-        # UPDATED: Use the new predict_proba method
         score = self.headline_classifier.predict_proba([headline])[0]
-        prediction = score >= 0.5  # Assuming 0.5 threshold
+        prediction = score >= GENERAL_CONFIG["clickbait_threshold"]
         return prediction, score
 
     # MODIFIED: Added 'post' argument and implemented the method body

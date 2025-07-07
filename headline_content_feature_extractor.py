@@ -14,7 +14,7 @@ def build_clickbait_regex(path):
     if not os.path.isfile(path):
         raise FileNotFoundError(path)
     with open(path, encoding="utf-8") as f:
-        terms = [re.escape(line.strip()) for line in f if line.strip()]
+        terms = [re.escape(line.strip()) for line in f if line.strip() and not line.strip().startswith("#")]
     pattern = r"\b(?:%s)\b" % "|".join(terms)
     return re.compile(pattern, re.IGNORECASE)
 

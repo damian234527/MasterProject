@@ -21,6 +21,7 @@ import re
 import os
 import json
 import numpy as np
+import csv
 from pathlib import Path
 import textstat
 import spacy
@@ -56,7 +57,8 @@ class ClickbaitDataset(Dataset):
     def __init__(self, dataframe: pd.DataFrame, tokenizer: PreTrainedTokenizer, length_max: int = 512):
         self.tokenizer = tokenizer
         self.length_max = length_max
-        self.data = dataframe.dropna().reset_index(drop=True)
+        essential_columns = ["headline", "content", "clickbait_score"]
+        self.data = dataframe.dropna(subset=essential_columns).reset_index(drop=True)
 
     def __len__(self):
         return len(self.data)
@@ -202,14 +204,14 @@ class Clickbait17FeatureAugmentedDataset(ClickbaitDataset):
                 "headline": headline,
                 "content": content,
                 "clickbait_score": label,
-                "headline_score": headline_score_val,  # Keep the raw score as a column
+                "headline_score": headline_score_val,
             }
             # Add the extracted features as f1, f2, f3...
             record_data.update({f"f{i + 1}": feat for i, feat in enumerate(features)})
             records.append(record_data)
 
         df_with_features = pd.DataFrame(records)
-        df_with_features.to_csv(path, index=False)
+        df_with_features.to_csv(path, index=False, quoting=csv.QUOTE_ALL)
         return df_with_features
 
     @classmethod
@@ -224,7 +226,8 @@ class Clickbait17FeatureAugmentedDataset(ClickbaitDataset):
         Returns:
             A dataset instance with loaded normalisation statistics.
         """
-        df = pd.read_csv(csv_path)
+        df = pd.read_csv(csv_path, keep_default_na=False)
+
         with open(csv_path.replace(".csv", "_metadata.json")) as metadata_file:
             meta = json.load(metadata_file)
         obj = cls(df, tokenizer, length_max)

@@ -36,17 +36,22 @@ DATASETS_CONFIG = {
 }
 
 HEADLINE_CONTENT_MODELS_PRETRAINED = [
+    "sentence-transformers/all-MiniLM-L6-v2", # takie sobie ale szybkie
     "bert-base-uncased",
     "google/bert_uncased_L-2_H-128_A-2",
     "roberta-base",
+    "microsoft/mdeberta-v3-base",
+    "christinacdl/mDeBERTa-Multilingual-Opus-mt-Clickbait-Detection",
     "microsoft/deberta-v3-small", # dobre
-    "sentence-transformers/all-MiniLM-L6-v2", # takie sobie ale szybkie
-    # "khalidalt/DeBERTa-v3-large-mnli", # dużo VRAMu, trzeba batch size do 8 zmniejszyć i czekać 6 godzin
+    "khalidalt/DeBERTa-v3-large-mnli", # dużo VRAMu, trzeba batch size do 8 zmniejszyć i czekać 6 godzin
     "distilroberta-base", # dobre i dosyć szybkie
+    "valurank/distilroberta-clickbait",
     "allenai/longformer-base-4096",
-    # TODO add sentence transformer
-    # ALBERT
-    # Cross encoders
+    "albert/albert-base-v2",
+    "google/electra-base-discriminator",
+    "xlnet/xlnet-base-cased",
+    "facebook/bart-large-mnli",
+    "google-t5/t5-base"
     "cross-encoder/ms-marco-MiniLM-L6-v2" # cross encoder, gorszy niż all-MiniLM (podobny czas)
 ]
 

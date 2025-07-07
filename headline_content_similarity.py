@@ -19,6 +19,7 @@ from headline_content_models import (
 )
 from headline_content_evaluation import evaluate_clickbait_predictions
 from data.clickbait17.clickbait17_utils import get_dataset_folder, combined_headline
+from data.clickbait_news_detection_dataset import prepare_cnd_dataset
 import logging_config
 import logging
 
@@ -157,9 +158,9 @@ class SimilarityMethodEvaluator:
         logging.info(f"--- Evaluating non-trainable model: {self.model_type} ---")
         try:
             df = pd.read_csv(test_csv).dropna(subset=["headline", "content", "clickbait_score"])
-            if 'post' not in df.columns:  # Ensure post column exists
-                df['post'] = ''
-            df['post'] = df['post'].fillna(df['headline'])  # Fallback for missing posts
+            if "post" not in df.columns:  # Ensure post column exists
+                df["post"] = ""
+            df["post"] = df["post"].fillna("")
             if df.empty:
                 logging.warning("Warning: Test dataframe is empty.")
                 return {}, []
@@ -200,11 +201,10 @@ class HeadlineContentSimilarity:
             raise TypeError("Method must inherit from SimilarityMethod")
         self.method = method
 
-    # MODIFIED: Added headline_score parameter
     def compare(self, headline: str, content: str, post: str = None, headline_score: float = None) -> float:
         import time
         start = time.perf_counter()
-        # MODIFIED: Pass the score down to the specific similarity method implementation
+        # Pass the score down to the specific similarity method implementation
         score = self.method.compute_score(headline, content, post=post, headline_score=headline_score)
         elapsed = time.perf_counter() - start
         return score
@@ -214,19 +214,27 @@ if __name__ == "__main__":
     transformers = ["sentence-transformers/all-MiniLM-L6-v2"]
     # tets = ClickbaitModelScore(model_type="standard", model_name_or_path="./models/transformer_bert-base-uncased_bert-base-uncased_1745798398/best_model")
     # print(tets.model.test("./data/clickbait17/models/bert-base-uncased/clickbait17_test.csv"))
+
     for transformer in transformers:
+        # prepare_cnd_dataset(input_csv_path="data/clickbait_news_detection/raw/train.csv", output_dir="data/clickbait_news_detection/", clickbait17_train_meta_path="data/clickbait17/models/default/clickbait17_train_features_metadata.json", tokenizer_name=transformer)
         directory = get_dataset_folder(transformer)
         #standard = ClickbaitModelScore(model_type="standard", model_name_or_path=HEADLINE_CONTENT_CONFIG["model_name"], output_directory="models/tets")
-        #standard.model.load_model("models/transformer_sentence-transformers_all-MiniLM-L6-v2_sentence-transformers_all-MiniLM-L6-v2_2025_07_01_18_40_26/best_model")
+        #standard.model.load_model("models/tets_sentence-transformers_all-MiniLM-L6-v2_2025_07_06_13_26_30/best_model")
         # standard.model.train(os.path.join(directory, "clickbait17_train.csv"), os.path.join(directory, "clickbait17_validation.csv"))
-        #standard.model.train(os.path.join(directory, "clickbait17_train.csv"), sampling_strategy="oversample")
+        #standard.model.train(os.path.join(directory, "clickbait17_train.csv"))
         # sampling_strategy="oversample",
         # use_weighted_loss=True
         #standard.model.test(os.path.join(directory, "clickbait17_test.csv"))
+        #standard.model.test(os.path.join(directory, "clickbait17_test_no_post.csv"))
+
 
         hybrid = ClickbaitModelScore(model_type="hybrid", model_name_or_path=HEADLINE_CONTENT_CONFIG["model_name"])
-        hybrid.model.train(os.path.join(directory, "clickbait17_train_features.csv"), sampling_strategy="oversample", use_weighted_loss=True)
-        hybrid.model.test(os.path.join(directory, "clickbait17_test_features.csv"))
+        hybrid.model.load_model("models/hybrid/best_model")
+        #hybrid.model.train(os.path.join(directory, "clickbait17_train_features.csv"))
+        #hybrid.model.test(os.path.join(directory, "clickbait17_test_features.csv"))
+        # hybrid.model.test(os.path.join(directory, "clickbait17_test_features_no_post.csv"))
+        hybrid.model.test("data/clickbait_news_detection/custom_dataset_test_features.csv")
+
 
         #standard.model.train(os.path.join(directory, "clickbait17_train.csv"), os.path.join(directory, "clickbait17_validation.csv"))
         #standard.model.test(os.path.join(directory, "clickbait17_test.csv"))

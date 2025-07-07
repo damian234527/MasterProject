@@ -46,8 +46,9 @@ def dataset17_create_csv(json_path: str = None):
     df_merged = df_merged[["postText", "targetTitle", "targetParagraphs", "truthMean"]] # "targetDescription", "targetKeywords" had too many missing values
     df_merged = df_merged.rename(columns={"postText": "post", "targetTitle": "headline", "targetParagraphs": "content", "truthMean": "clickbait_score"})
 
-    # Ensure content column is not empty after cleaning, fillna with an empty string
-    df_merged['content'] = df_merged['content'].fillna('')
+    # Ensure post and content columns are not empty after cleaning, fillna with an empty string
+    df_merged["post"] = df_merged["post"].fillna("")
+    df_merged["content"] = df_merged["content"].fillna("")
 
     # Save the processed DataFrame to a new CSV file
     output_csv_path = "clickbait17_" + os.path.basename(os.path.normpath(json_path)) + ".csv"
@@ -67,14 +68,13 @@ def clean_text(val):
     """
     # If the value is a list of paragraphs, join them into a single text block
     if isinstance(val, list):
-        val = "\n".join(str(item).strip() for item in val if item)
+        val = " ".join(str(item).strip() for item in val if item)
     # If the value is not a string (e.g., NaN), return it as is
     elif not isinstance(val, str):
         return val
 
     # Removing special characters and extra whitespace
-    val = re.sub(r"[^\w\s.,:;!?@#&()'\"%-]", "", val)
-    # val = val.replace('\n', '__NEWLINE__')
+    val = val.replace('"', "'")
+    val = re.sub(r"[^\w\s.,:;!?@#&()\'%-]", "", val)
     val = re.sub(r"\s+", " ", val)
-    # val = val.replace('__NEWLINE__', '\n')
     return val.strip()

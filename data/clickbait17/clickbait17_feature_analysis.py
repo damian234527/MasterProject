@@ -114,7 +114,7 @@ def analyze_and_store_features(feature_csv_path: str, output_path: str, clickbai
 
 if __name__ == "__main__":
     import logging_config
-    feature_csv_path = "models/sentence-transformers_all-MiniLM-L6-v2/clickbait17_train_features.csv"
+    feature_csv_path = "models/default/clickbait17_train_features_original.csv"
     output_json_path = "feature_statistics.json"
     clickbait_threshold = GENERAL_CONFIG["clickbait_threshold"]
 

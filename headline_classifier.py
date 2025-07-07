@@ -3,7 +3,7 @@ import pandas as pd
 from pandas import read_csv
 from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LogisticRegression, SGDClassifier, PassiveAggressiveClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.svm import LinearSVC
@@ -14,7 +14,6 @@ import os
 import logging_config
 import logging
 from config import GENERAL_CONFIG
-
 logger = logging.getLogger(__name__)
 
 class HeadlineClassifier:
@@ -56,6 +55,11 @@ class HeadlineClassifier:
             classifier = RandomForestClassifier(n_estimators=100, random_state=self.random_state)
         elif self.model_type == "svm":
             classifier = LinearSVC(random_state=self.random_state)
+        elif self.model_type == "sgd":
+            classifier = SGDClassifier(random_state=self.random_state, loss="hinge")
+        elif self.model_type == "passive_aggressive":
+            classifier = PassiveAggressiveClassifier(random_state=self.random_state)
+
         else:
             raise ValueError(f"Unsupported model_type '{self.model_type}'.")
 
@@ -141,7 +145,7 @@ if __name__ == "__main__":
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=.2, random_state=GENERAL_CONFIG["seed"])
 
     # Define the models to test
-    model_types_to_test = ["logistic", "naive_bayes", "random_forest", "svm"]
+    model_types_to_test = ["logistic", "naive_bayes", "random_forest", "svm", "sgd", "passive_aggressive"]
 
     best_score = -1 # Initialize with a low score
     best_classifier: HeadlineClassifier = None # To store the best model instance

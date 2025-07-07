@@ -6,7 +6,7 @@ import re
 from config import GENERAL_CONFIG
 
 # TODO
-INPUT_CSV_PATH = "models/sentence-transformers_all-MiniLM-L6-v2/clickbait17_train_features.csv"
+INPUT_CSV_PATH = "models/default/clickbait17_train_features_original.csv"
 OUTPUT_DIR = "visualization"
 CLICKBAIT_THRESHOLD = GENERAL_CONFIG.get("clickbait_threshold", 0.5)
 

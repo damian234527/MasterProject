@@ -134,12 +134,58 @@ class ClickbaitModelBase(ABC):
             print("Warning: No data processed in test loop.")
             return float("nan"), []
 
-        # mse = mean_squared_error(true_labels, predictions)
-        # print(f"MSE for test set: {mse:.4f}")
+        true_labels_np = np.array(true_labels)
+        predictions_np = np.array(predictions)
 
+        # --- 1. Identify and Report Problematic Rows ---
+        # Find indices where predictions are NaN or infinity
+        nan_indices = np.where(~np.isfinite(predictions_np))[0]
+
+        if len(nan_indices) > 0:
+            logging.error(f"FATAL: Found {len(nan_indices)} rows that resulted in NaN/inf predictions.")
+
+            # Access the cleaned dataframe used by the dataset to show the exact problematic rows
+            # The dataset's internal `data` attribute reflects the data after dropping initial NaNs.
+            problematic_df = test_dataset.data.iloc[nan_indices]
+
+            logging.error("The following input rows are causing the model to fail:")
+            # Use pandas context manager to ensure the full DataFrame is printed for inspection
+            with pd.option_context('display.max_rows', None, 'display.max_columns', None, 'display.width', 1000):
+                logging.error(f"\n{problematic_df}")
+
+            # Check if any feature columns in these specific rows have NaN values
+            feature_cols = [col for col in problematic_df.columns if col.startswith('f')]
+            if feature_cols:
+                nan_in_features = problematic_df[feature_cols].isnull().sum()
+                if nan_in_features.sum() > 0:
+                    logging.error("NaN values were found in these feature columns of the problematic rows:")
+                    logging.error(nan_in_features[nan_in_features > 0])
+                else:
+                    logging.info(
+                        "No NaN values found in the feature columns of the problematic rows. The issue might be from normalization (e.g., division by zero).")
+
+        # --- 2. Clean Data for Safe Evaluation ---
+        # Create a boolean mask for all valid (finite) entries
+        valid_indices_mask = np.isfinite(true_labels_np) & np.isfinite(predictions_np)
+
+        num_removed = len(true_labels_np) - np.sum(valid_indices_mask)
+        if num_removed > 0:
+            logging.warning(f"Removing {num_removed} rows with NaN/inf values from metrics calculation.")
+
+        # Filter both arrays to keep only the valid entries
+        true_labels_clean = true_labels_np[valid_indices_mask]
+        predictions_clean = predictions_np[valid_indices_mask]
+
+        if len(true_labels_clean) == 0:
+            logging.error("After removing invalid values, the evaluation set is empty. Cannot compute metrics.")
+            return {}, predictions  # Return original predictions for inspection
+
+        # --- 3. Evaluate with Cleaned Data ---
         path = f"./results/{os.path.basename(self.model_name)}"
-        metrics = evaluate_clickbait_predictions(true_labels, predictions,
-                                                 save_path=os.path.join(path, f"{self.model_name}_test_metrics.csv"))
+        metrics = evaluate_clickbait_predictions(true_labels_clean, predictions_clean,
+                                                 save_path=os.path.join(path,
+                                                                        f"{os.path.basename(self.model_name)}_test_metrics.csv"))
+        # ### MODIFICATION END ###
         end_time = time.perf_counter()
         total_time = end_time - start_time
         logging.info(f"Testing took {total_time:.4f} seconds.")

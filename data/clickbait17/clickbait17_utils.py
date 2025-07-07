@@ -3,24 +3,32 @@
 This module provides helper functions for constructing file paths and combining
 text fields from the dataset.
 """
-
 import os
 import pandas as pd
+from tqdm import tqdm
+from headline_content_feature_extractor import FeatureExtractor
 from config import DATASETS_CONFIG
+import csv
 
-def get_dataset_folder(tokenizer_name: str) -> str:
+def get_dataset_folder(tokenizer_name: str, use_specific_tokenizer: bool = False) -> str: # MODIFIED
     """Returns the folder path where datasets for the given tokenizer are stored.
 
     Args:
         tokenizer_name: The name of the Hugging Face tokenizer.
+        use_specific_tokenizer: If False, uses a generic 'default' folder. # NEW
+                                If True, uses a tokenizer-specific folder. # NEW
 
     Returns:
         The path to the dataset folder.
     """
-    # Create a filesystem-safe version of the tokenizer name
-    safe_name = get_safe_name(tokenizer_name)
-    # Construct the path to the 'models' sub-directory for the specific tokenizer
+    # Conditionally set the folder name
+    if use_specific_tokenizer:
+        safe_name = get_safe_name(tokenizer_name)
+    else:
+        safe_name = "default"
+    # Construct the path to the 'models' sub-directory for the specific tokenizer (or to default)
     return os.path.join(os.path.dirname(__file__), "models", safe_name)
+
 
 def get_safe_name(tokenizer_name: str) -> str:
     """Creates a filesystem-safe name from a tokenizer name.
@@ -33,32 +41,34 @@ def get_safe_name(tokenizer_name: str) -> str:
     """
     return tokenizer_name.replace("/", "_")
 
-def get_basic_csv_paths(tokenizer_name: str) -> tuple:
+def get_basic_csv_paths(tokenizer_name: str, use_specific_tokenizer: bool = False) -> tuple:
     """Returns train and validation CSV paths for basic (no features) datasets.
 
     Args:
         tokenizer_name: The name of the Hugging Face tokenizer.
+        use_specific_tokenizer: Passed to get_dataset_folder.
 
     Returns:
         A tuple containing the paths to the training and validation CSV files.
     """
-    folder = get_dataset_folder(tokenizer_name)
+    folder = get_dataset_folder(tokenizer_name, use_specific_tokenizer)
     train_csv = os.path.join(folder, f"{DATASETS_CONFIG["dataset_headline_content_name"]}_{DATASETS_CONFIG["train_suffix"]}.csv")
     val_csv = os.path.join(folder,f"{DATASETS_CONFIG["dataset_headline_content_name"]}_{DATASETS_CONFIG["validation_suffix"]}.csv")
     return train_csv, val_csv
 
 
-def get_feature_csv_paths(tokenizer_name: str) -> tuple:
+def get_feature_csv_paths(tokenizer_name: str, use_specific_tokenizer: bool = False) -> tuple:
     """Returns train and validation CSV paths for feature-augmented datasets.
 
     Args:
         tokenizer_name: The name of the Hugging Face tokenizer.
+        use_specific_tokenizer: Passed to get_dataset_folder
 
     Returns:
         A tuple containing the paths to the training and validation feature
         CSV files.
     """
-    folder = get_dataset_folder(tokenizer_name)
+    folder = get_dataset_folder(tokenizer_name, use_specific_tokenizer)
     train_csv = os.path.join(folder, f"{DATASETS_CONFIG["dataset_headline_content_name"]}_{DATASETS_CONFIG["train_suffix"]}_{DATASETS_CONFIG["features_suffix"]}.csv")
     val_csv = os.path.join(folder, f"{DATASETS_CONFIG["dataset_headline_content_name"]}_{DATASETS_CONFIG["validation_suffix"]}_{DATASETS_CONFIG["features_suffix"]}.csv")
     return train_csv, val_csv
@@ -124,3 +134,30 @@ def combined_headline_series(df):
     new_headline_series.loc[only_headline] = combined_headline
 
     return new_headline_series
+
+def create_blank_post_csv(original_csv_path: str = "models/default/clickbait17_test.csv"):
+    path, file_extension = os.path.splitext(original_csv_path)
+    new_csv_path = f"{path}_no_post{file_extension}"
+    df = pd.read_csv(original_csv_path)
+    if "_features" not in original_csv_path:
+        df["post"] = ""
+        df.to_csv(new_csv_path, index=False, quoting=csv.QUOTE_ALL)
+        return df
+    else:
+        feature_extractor = FeatureExtractor()
+        feature_columns = sorted([col for col in df.columns if col.startswith('f')], key=lambda x: int(x[1:]))
+        updated_rows = []
+        for _, row in tqdm(df.iterrows(), total=df.shape[0], desc="Processing rows"):
+            new_row = row.copy()
+            post_text = ""
+            base_features = feature_extractor.extract(post_text, new_row["headline"], new_row["content"])
+            all_features = base_features + [new_row["headline_score"]]
+            new_row["post"] = post_text
+            for i, col_name in enumerate(feature_columns):
+                new_row[col_name] = all_features[i]
+            updated_rows.append(new_row)
+        new_df = pd.DataFrame(updated_rows)
+        new_df.to_csv(new_csv_path, index=False, quoting=csv.QUOTE_ALL)
+
+if __name__ == "__main__":
+    create_blank_post_csv("models/default/clickbait17_test.csv")

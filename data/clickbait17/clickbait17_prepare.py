@@ -28,6 +28,7 @@ from headline_classifier import HeadlineClassifier
 from tqdm import tqdm
 import numpy as np
 from scipy.stats import boxcox
+import csv
 
 # Set pandas to use tqdm for progress bars on .apply()
 tqdm.pandas()
@@ -54,12 +55,13 @@ def save_metadata(csv_path: str, tokenizer_name: str, extra: Dict = None):
         json.dump(metadata, f, indent=4)
 
 
-def metadata_matches(csv_path: str, tokenizer_name: str) -> bool:
+def metadata_matches(csv_path: str, tokenizer_name: str, use_specific_tokenizer: bool = False) -> bool:
     """Checks if a CSV file's metadata matches the given tokenizer.
 
     Args:
         csv_path: The path to the CSV file.
         tokenizer_name: The tokenizer name to check against.
+        use_specific_tokenizer: If False, ignores tokenizer name check.
 
     Returns:
         True if the metadata file exists and the tokenizer name matches,
@@ -68,12 +70,14 @@ def metadata_matches(csv_path: str, tokenizer_name: str) -> bool:
     json_path = csv_path.replace(".csv", "_metadata.json")
     if not os.path.exists(csv_path) or not os.path.exists(json_path):
         return False
+    if use_specific_tokenizer is False:
+        return True
     with open(json_path, "r") as f:
         metadata = json.load(f)
     return metadata.get("tokenizer_name") == tokenizer_name
 
 
-def prepare_clickbait17_datasets(base_path: str = None, tokenizer_name: str = None, dataset_type: str = "both"):
+def prepare_clickbait17_datasets(base_path: str = None, tokenizer_name: str = None, dataset_type: str = "both", use_specific_tokenizer: bool = False):
     """Prepares the Clickbait17 datasets.
 
     This function orchestrates the creation of basic and feature-augmented
@@ -87,6 +91,7 @@ def prepare_clickbait17_datasets(base_path: str = None, tokenizer_name: str = No
             'hybrid', or 'both'. 'basic' creates datasets with only the
             textual content, while 'hybrid' creates feature-augmented
             datasets. 'both' creates both types.
+        use_specific_tokenizer: If False, saves to a generic 'default' folder.
     """
     logger.info("\n--- Preparing Clickbait17 datasets ---")
 
@@ -106,7 +111,7 @@ def prepare_clickbait17_datasets(base_path: str = None, tokenizer_name: str = No
 
     # Initialize tokenizer and create the main directory for datasets processed
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
-    dataset_folder = get_dataset_folder(tokenizer_name)
+    dataset_folder = get_dataset_folder(tokenizer_name, use_specific_tokenizer)
     os.makedirs(dataset_folder, exist_ok=True)
 
     headline_classifier = None
@@ -134,10 +139,10 @@ def prepare_clickbait17_datasets(base_path: str = None, tokenizer_name: str = No
         # Basic CSV creation for standard model
         basic_csv_filename = os.path.join(dataset_folder,
                                           f"{DATASETS_CONFIG['dataset_headline_content_name']}_{subset_name}.csv")
-        if not metadata_matches(basic_csv_filename, tokenizer_name):
+        if not metadata_matches(basic_csv_filename, tokenizer_name, use_specific_tokenizer):
             logger.info(f"Creating basic CSV for {subset_name}...")
             df = dataset17_create_csv(subset_path)
-            df.to_csv(basic_csv_filename, index=False)
+            df.to_csv(basic_csv_filename, index=False, quoting=csv.QUOTE_ALL)
             save_metadata(basic_csv_filename, tokenizer_name)
         else:
             logger.info(f"Basic CSV for {subset_name} already exists. Skipping.")
@@ -160,10 +165,10 @@ def prepare_clickbait17_datasets(base_path: str = None, tokenizer_name: str = No
                     boxcox_lambdas = meta.get("boxcox_lambdas", {})
 
             # Create the feature augmented file if it's missing or metadata is incorrect
-            if not metadata_matches(feature_csv_filename, tokenizer_name):
+            if not metadata_matches(feature_csv_filename, tokenizer_name, use_specific_tokenizer):
                 logger.info(f"Creating feature-augmented CSV for {subset_name}...")
                 if df is None:
-                    df = pd.read_csv(basic_csv_filename)
+                    df = pd.read_csv(basic_csv_filename, keep_default_na=False)
 
                 # Generate headline scores using the pre-trained classifier
                 logger.info(f"Generating headline scores for {subset_name}...")
@@ -178,6 +183,11 @@ def prepare_clickbait17_datasets(base_path: str = None, tokenizer_name: str = No
                 # Use the dataset class to handle feature extraction
                 dataset = Clickbait17FeatureAugmentedDataset(df, tokenizer)
                 df_features = dataset.save_with_features(feature_csv_filename)
+
+                # Save a copy of the features before any transformation
+                unscaled_csv_filename = feature_csv_filename.replace(".csv", "_original.csv")
+                logger.info(f"Saving unscaled features to '{os.path.basename(unscaled_csv_filename)}'...")
+                df_features.to_csv(unscaled_csv_filename, index=False, quoting=csv.QUOTE_ALL)
 
                 feature_columns = [col for col in df_features.columns if col.startswith("f")]
 
@@ -198,10 +208,32 @@ def prepare_clickbait17_datasets(base_path: str = None, tokenizer_name: str = No
                     logger.info(f"Applying learned Box-Cox transformations to {subset_name}...")
                     if boxcox_lambdas:
                         for feature, lmbda in boxcox_lambdas.items():
-                            df_features[feature] = boxcox(df_features[feature], lmbda=lmbda)
-                            logger.info(f"Transformed '{feature}' using learned lambda={lmbda:.4f}")
+                            if feature in df_features.columns:
 
-                    # For the training set, calculate and store feature medians and IQRs
+                                # Identify rows with non-positive values that cannot be transformed.
+                                non_positive_mask = df_features[feature] <= 0
+                                num_non_positive = non_positive_mask.sum()
+
+                                # Isolate the positive values that can be transformed
+                                positive_mask = ~non_positive_mask
+
+                                # Apply the Box-Cox transformation only to the positive values
+                                if positive_mask.any():
+                                    df_features.loc[positive_mask, feature] = boxcox(
+                                        df_features.loc[positive_mask, feature], lmbda=lmbda)
+
+                                # Assign the non-positive the minimum value from the newly transformed positive data
+                                if num_non_positive > 0 and positive_mask.any():
+                                    min_transformed_val = df_features.loc[positive_mask, feature].min()
+                                    df_features.loc[non_positive_mask, feature] = min_transformed_val
+
+                                logger.info(
+                                    f"Transformed '{feature}' using lambda={lmbda:.4f}, safely handling {num_non_positive} non-positive value(s).")
+                            else:
+                                logger.warning(
+                                    f"Feature '{feature}' from Box-Cox lambdas not found in {subset_name} columns.")
+
+                # For the training set, calculate and store feature medians and IQRs
                 if subset_key == "train":
                     mean = df_features[feature_columns].mean().tolist()
                     median = df_features[feature_columns].median().tolist()
@@ -212,7 +244,7 @@ def prepare_clickbait17_datasets(base_path: str = None, tokenizer_name: str = No
                     training_set_stats.update({"features_mean": mean, "features_median": median, "features_std": std, "features_iqr": iqr})
 
                 # Save the CSV with transformed features
-                df_features.to_csv(feature_csv_filename, index=False)
+                df_features.to_csv(feature_csv_filename, index=False, quoting=csv.QUOTE_ALL)
                 save_metadata(feature_csv_filename, tokenizer_name, training_set_stats)
             else:
                 logger.info(f"Feature-augmented CSV for {subset_name} already exists. Skipping.")
@@ -237,8 +269,3 @@ def dataset_check(tokenizer_name: str) -> str:
     if not os.path.exists(csv_path):
         prepare_clickbait17_datasets(base_path=os.path.join(dataset_main, "raw"), tokenizer_name=tokenizer_name)
     return dataset_directory
-
-
-if __name__ == "__main__":
-    import logging_config
-    # prepare_clickbait17_datasets(tokenizer_name=HEADLINE_CONTENT_CONFIG["tokenizer_name"], dataset_type="hybrid")
