@@ -1,3 +1,10 @@
+"""A feature extractor for linguistic and structural properties of articles.
+
+This module provides the `FeatureExtractor` class, which is designed to compute
+a wide range of features from the social media post, headline, and content of
+an article. These features are intended for use in machine learning models,
+particularly the hybrid clickbait detection model.
+"""
 import os
 import re
 from typing import List, Dict, Union
@@ -9,74 +16,106 @@ from nltk.corpus import stopwords
 from nltk.sentiment import SentimentIntensityAnalyzer
 from nltk.tokenize import word_tokenize
 
+
 def build_clickbait_regex(path):
-    """Return compiled regex based on external lexicon file."""
+    """Compiles a regular expression from a list of clickbait terms in a file.
+
+    Each line in the file is treated as a term. The resulting regex will match
+    any of these terms as whole words, ignoring case.
+
+    Args:
+        path (str): The path to the lexicon file containing one term per line.
+
+    Returns:
+        A compiled regular expression object.
+
+    Raises:
+        FileNotFoundError: If the specified path does not exist.
+    """
     if not os.path.isfile(path):
         raise FileNotFoundError(path)
     with open(path, encoding="utf-8") as f:
+        # Read terms, escape special characters, and filter out empty lines/comments.
         terms = [re.escape(line.strip()) for line in f if line.strip() and not line.strip().startswith("#")]
+    # Create a regex pattern that matches any of the terms as whole words.
     pattern = r"\b(?:%s)\b" % "|".join(terms)
     return re.compile(pattern, re.IGNORECASE)
 
 
 class FeatureExtractor:
-    """
-    A centralized class for extracting features from post, headline, and content.
-    Initializes all NLP tools once to be used across the application.
+    """A class to extract features from post, headline, and content.
+
+    This class initializes all necessary NLP tools (e.g., spaCy, NLTK) once
+    to provide an efficient `extract` method for computing a fixed set of 22
+    linguistic and structural features.
+
+    Attributes:
+        stop_words (set): A set of English stopwords from NLTK.
+        sentiment_analyzer (SentimentIntensityAnalyzer): An NLTK sentiment
+            analyzer.
+        nlp (spacy.Language): A spaCy language model for NLP tasks like named
+            entity recognition.
+        clickbait_regex (re.Pattern): A compiled regex for detecting common
+            clickbait phrases.
+        feature_names (list[str]): An ordered list of the names of the 22
+            features that are extracted.
     """
 
     def __init__(self):
-        """Initializes NLP tools and defines feature names."""
-        # --- Initialize NLP Tools ---
+        """Initializes NLP tools and defines the list of feature names."""
+        # Initialize all required NLP libraries and models.
         self.stop_words = set(stopwords.words("english"))
         self.sentiment_analyzer = SentimentIntensityAnalyzer()
         try:
             self.nlp = spacy.load("en_core_web_sm")
         except OSError:
+            # Download the spaCy model if it's not already installed.
             print("Downloading 'en_core_web_sm' model for spaCy")
             os.system("python -m spacy download en_core_web_sm")
             self.nlp = spacy.load("en_core_web_sm")
 
-        # --- Build Clickbait Regex ---
-        # Assumes clickbait_phrases.txt is in the parent directory of this file's location.
-        # Adjust the path if your project structure is different.
+        # Build the clickbait phrase regex from the lexicon file.
         clickbait_phrases_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data/clickbait_phrases.txt")
         if not os.path.exists(clickbait_phrases_path):
-             # Fallback for different structures, like when running from the project root.
-             clickbait_phrases_path = "clickbait_phrases.txt"
+            clickbait_phrases_path = "clickbait_phrases.txt"
         self.clickbait_regex = build_clickbait_regex(clickbait_phrases_path)
 
-        # --- Define Feature Names ---
+        # Define the canonical list of feature names in the correct order.
         self.feature_names = [
             "Post Length (Words)", "Post Length (Chars)", "Headline Length (Words)", "Headline Length (Chars)",
             "Content Length (Words)", "Content Length (Chars)", "Post/Content Length Ratio (Words)",
             "Headline/Content Length Ratio (Words)", "Exclamations in Headline", "Questions in Headline",
             "Exclamations in Post", "Questions in Post", "Uppercase Ratio in Post",
-            "Stopword Ratio in Post", "Clickbait Word Count", "Sentiment Difference (Post-Content)", "Readability (Flesch)",
+            "Stopword Ratio in Post", "Clickbait Word Count", "Sentiment Difference (Post-Content)",
+            "Readability (Flesch)",
             "Pronoun Count in Headline", "Question Word Count in Headline", "Jaccard Similarity (Post-Content)",
             "Named Entity Count in Post", "Named Entity Count in Content"
         ]
 
-    def extract(self, post: str, headline: str, content: str, as_dict: bool = False) -> Union[List[float], Dict[str, float]]:
-        """
-        Extracts a comprehensive set of 22 features.
+    def extract(self, post: str, headline: str, content: str, as_dict: bool = False) -> Union[
+        List[float], Dict[str, float]]:
+        """Extracts a comprehensive set of 22 features from the input texts.
 
         Args:
             post (str): The social media post text.
             headline (str): The article headline.
-            content (str): The article content.
-            as_dict (bool): If True, returns features as a dictionary with names.
-                            If False, returns a list of feature values.
+            content (str): The main article content.
+            as_dict (bool, optional): If True, returns features as a dictionary
+                mapping feature names to values. If False, returns a list of
+                feature values in a fixed order. Defaults to False.
 
         Returns:
-            A list or dictionary of the extracted features.
+            A list or dictionary of the 22 extracted feature values.
         """
+        # Ensure 'post' is a string to prevent errors with NoneType.
         post = post if post is not None else ""
 
+        # Pre-tokenize texts for efficiency.
         post_words = word_tokenize(post.lower()) if post else []
         headline_words = word_tokenize(headline.lower()) if headline else []
         content_words = word_tokenize(content.lower()) if content else []
 
+        # --- Feature Calculations ---
         post_length_words = float(len(post_words))
         post_length_chars = float(len(post))
         headline_length_words = float(len(headline_words))
@@ -110,6 +149,7 @@ class FeatureExtractor:
         post_entity_count = float(len(post_doc.ents))
         content_entity_count = float(len(content_doc.ents))
 
+        # Consolidate all features into a list in the correct order.
         features = [
             post_length_words, post_length_chars, headline_length_words, headline_length_chars,
             content_length_words, content_length_chars, post_to_content_length_ratio,
@@ -119,6 +159,7 @@ class FeatureExtractor:
             pronoun_count, question_word_count, jaccard_similarity, post_entity_count, content_entity_count
         ]
 
+        # Return features as a dictionary or a list based on the 'as_dict' flag.
         if as_dict:
             return dict(zip(self.feature_names, features))
 

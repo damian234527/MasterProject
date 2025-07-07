@@ -232,7 +232,7 @@ def run_fast_test(
     logging.info(f"\n--- Model Testing Finished ---")
     logging.info(f"Summary of all results saved to: {summary_file_path}")
     logging.info("\nFinal Results Summary:")
-    logging.info(results_df.to_markdown(index=False))
+    logging.info(f"\n{results_df.to_markdown(index=False)}")
 
 
 if __name__ == "__main__":

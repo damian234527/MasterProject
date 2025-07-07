@@ -1,16 +1,16 @@
-"""Prepares the Clickbait17 dataset for training and evaluation.
+"""Prepares the Clickbait17 dataset for model training and evaluation.
 
-The script performs the following steps:
-1.  Creates basic CSV files from the raw JSONL data.
-2.  Optionally, creates feature-augmented CSV files for hybrid models. This
-    involves:
-    - Loading a pre-trained headline classifier to generate a 'headline_score'
-      for each sample.
-    - Extracting a set of 23 linguistic and statistical features from the
-      textual data.
-    - Saving the data with these new features to separate CSV files.
-3.  Saves metadata files alongside the generated CSVs, including the
-    tokenizer used and normalization statistics for the features.
+This script is the main data preparation entry point. It orchestrates the
+entire process of converting the raw Clickbait17 JSONL data into structured
+CSV files suitable for training both standard and feature-augmented models.
+
+The key steps include:
+1. Creating basic CSV files from the raw data.
+2. Generating a 'headline_score' feature using a pre-trained classifier.
+3. Extracting a comprehensive set of linguistic and statistical features.
+4. Applying Box-Cox transformations to normalize skewed feature distributions.
+5. Saving the final datasets along with metadata, including normalization
+   statistics, to ensure consistent preprocessing between train and test sets.
 """
 
 import os

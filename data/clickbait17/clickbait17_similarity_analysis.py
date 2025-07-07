@@ -1,13 +1,12 @@
-"""Analyzes and stores statistics about similarity scores from the Clickbait17 dataset.
+"""Analyzes and stores statistics for similarity scores on the Clickbait17 dataset.
 
 This script reads a dataset CSV file, computes two types of similarity scores
-(TF-IDF Cosine and Transformer Embedding), and then calculates statistical measures
-(mean, std, p25, p75) and histogram data for these scores.
-
-The statistics are computed separately for clickbait and non-clickbait articles
-to facilitate comparison and are stored in a new JSON file.
+(TF-IDF Cosine and Transformer Embedding) for each entry, and then calculates
+detailed statistical measures for these scores. The statistics, including
+histograms for percentile calculations, are computed separately for clickbait
+and non-clickbait articles and stored in a JSON file for later use by the
+explanation generation module.
 """
-
 import pandas as pd
 import numpy as np
 import json
@@ -23,7 +22,7 @@ import logging_config
 
 logger = logging.getLogger(__name__)
 
-# Define the names for the similarity metrics we will be analyzing
+# Define the canonical names for the similarity metrics to be analyzed.
 SIMILARITY_NAMES = [
     "TF-IDF Cosine Similarity",
     "Transformer Embedding Similarity"
@@ -36,14 +35,15 @@ def analyze_and_store_similarity(
         clickbait_threshold: float = 0.5,
         num_bins: int = 100
 ):
-    """
-    Analyzes similarity scores from a CSV and stores the statistics in a JSON file.
+    """Analyzes similarity scores from a CSV and stores statistics in JSON.
 
     Args:
-        dataset_csv_path: Path to the dataset CSV file (e.g., test or train set).
-        output_path: Path to save the output JSON file.
-        clickbait_threshold: Threshold for classifying articles as clickbait.
-        num_bins: The number of bins to use for histogram generation.
+        dataset_csv_path (str): The path to the dataset CSV file.
+        output_path (str): The path where the output JSON statistics file will be saved.
+        clickbait_threshold (float, optional): The threshold for classifying
+            articles as clickbait. Defaults to 0.5.
+        num_bins (int, optional): The number of bins to use for generating
+            histograms. Defaults to 100.
     """
     logger.info(f"Loading dataset from: {dataset_csv_path}")
     if not os.path.exists(dataset_csv_path):
@@ -57,14 +57,13 @@ def analyze_and_store_similarity(
         logger.warning("DataFrame is empty after dropping NaNs. Aborting analysis.")
         return
 
-    # Initialize similarity calculators
+    # Initialize the similarity calculation methods.
     tfidf_calculator = CosineSimilarityTFIDF()
     transformer_calculator = TransformerEmbeddingSimilarity(model_name=HEADLINE_CONTENT_CONFIG["model_name"])
 
-    # --- Calculate Similarity Scores ---
+    # Calculate both types of similarity scores for every row in the dataset.
     logger.info("Calculating similarity scores for the dataset...")
     tqdm.pandas(desc="Calculating Similarities")
-
     df["tfidf_similarity"] = df.progress_apply(
         lambda row: tfidf_calculator.compute_score(row["headline"], row["content"], row["post"]),
         axis=1
@@ -77,9 +76,11 @@ def analyze_and_store_similarity(
 
     similarity_cols = ["tfidf_similarity", "transformer_similarity"]
 
-    # --- Analyze Scores ---
-    global_ranges = {name: {"min": float(df[col].min()), "max": float(df[col].max())} for name, col in zip(SIMILARITY_NAMES, similarity_cols)}
+    # Calculate global min/max for scaling visualizations.
+    global_ranges = {name: {"min": float(df[col].min()), "max": float(df[col].max())} for name, col in
+                     zip(SIMILARITY_NAMES, similarity_cols)}
 
+    # Split the DataFrame into clickbait and non-clickbait groups.
     df_clickbait = df[df["clickbait_score"] > clickbait_threshold].copy()
     df_non_clickbait = df[df["clickbait_score"] <= clickbait_threshold].copy()
 
@@ -87,30 +88,28 @@ def analyze_and_store_similarity(
         logger.warning("Dataset must contain both clickbait and non-clickbait examples to generate stats.")
         return
 
-    logger.info(f"Analyzing {len(df_clickbait)} clickbait articles and {len(df_non_clickbait)} non-clickbait articles.")
+    logger.info(
+        f"Analyzing {len(df_clickbait)} clickbait articles and {len(df_non_clickbait)} non-clickbait articles.")
 
     def get_stats_for_group(dataframe, sim_names_list, sim_cols_list):
-        """Calculates statistics, including histogram data, for a given group."""
+        """Helper function to calculate statistics for a given DataFrame group."""
         group_stats = {}
         for i, sim_col in enumerate(sim_cols_list):
             sim_name = sim_names_list[i]
             sim_data = dataframe[sim_col].dropna()
 
-            # Basic stats
+            # Basic descriptive statistics.
             mean = float(sim_data.mean())
             std = float(sim_data.std())
             p25 = float(sim_data.quantile(0.25))
             p75 = float(sim_data.quantile(0.75))
 
-            # Histogram and cumulative distribution data
+            # Histogram data for non-parametric percentile calculations.
             hist, bin_edges = np.histogram(sim_data, bins=num_bins)
             cumulative_counts = np.cumsum(hist)
 
             group_stats[sim_name] = {
-                "mean": mean,
-                "std": std,
-                "p25": p25,
-                "p75": p75,
+                "mean": mean, "std": std, "p25": p25, "p75": p75,
                 "histogram": {
                     "cumulative_counts": cumulative_counts.tolist(),
                     "bin_edges": bin_edges.tolist()
@@ -118,6 +117,7 @@ def analyze_and_store_similarity(
             }
         return group_stats
 
+    # Compile the final statistics object.
     output_stats = {
         "clickbait_profile": get_stats_for_group(df_clickbait, SIMILARITY_NAMES, similarity_cols),
         "non_clickbait_profile": get_stats_for_group(df_non_clickbait, SIMILARITY_NAMES, similarity_cols),
@@ -135,10 +135,10 @@ def analyze_and_store_similarity(
 
 
 if __name__ == "__main__":
-    dataset_csv_path = "models/sentence-transformers_all-MiniLM-L6-v2/clickbait17_train_features.csv"
+    # Define paths for the script.
+    dataset_csv_path = "models/default/clickbait17_train_features.csv"
     output_json_path = "similarity_statistics.json"
     clickbait_threshold = GENERAL_CONFIG.get("clickbait_threshold", 0.5)
 
-    # os.makedirs(os.path.dirname(output_json_path), exist_ok=True)
-
+    # Run the analysis.
     analyze_and_store_similarity(dataset_csv_path, output_json_path, clickbait_threshold)
