@@ -2,6 +2,9 @@ import os
 import pandas as pd
 from datetime import datetime
 import torch # For torch.cuda.empty_cache
+from tqdm.auto import tqdm
+import random
+import numpy as np
 from headline_content_models import (
     ClickbaitTransformer,
     ClickbaitFeatureEnhancedTransformer
@@ -11,22 +14,24 @@ from headline_content_similarity import (
     TransformerEmbeddingSimilarity,
     SimilarityMethodEvaluator
 )
+from utils import set_seed
 from data.clickbait17.clickbait17_prepare import prepare_clickbait17_datasets, dataset_check
 from data.clickbait17.clickbait17_utils import get_basic_csv_paths, get_feature_csv_paths, get_safe_name
-from config import HEADLINE_CONTENT_CONFIG, DATASETS_CONFIG, HEADLINE_CONTENT_MODELS_PRETRAINED
+from config import HEADLINE_CONTENT_CONFIG, DATASETS_CONFIG, HEADLINE_CONTENT_MODELS_PRETRAINED, GENERAL_CONFIG
 import logging
 
 logger = logging.getLogger(__name__)
 
 
+
 # --- Configuration for Fast Testing ---
 
 # Parameters for quick runs
-FAST_TEST_EPOCHS = 1
-FAST_TEST_BATCH_SIZE = HEADLINE_CONTENT_CONFIG.get("batch_size", 8) # Use existing config or a default
+FAST_TEST_EPOCHS = HEADLINE_CONTENT_CONFIG["epochs"]
+FAST_TEST_BATCH_SIZE = HEADLINE_CONTENT_CONFIG["batch_size"]
 
 # Attempt to get the dataset name from config, otherwise use a default
-DATASET_BASE_NAME = DATASETS_CONFIG.get("dataset_headline_content_name", "clickbait17-validation-1.0")
+DATASET_BASE_NAME = DATASETS_CONFIG["dataset_headline_content_name"]
 # --- End of Configuration ---
 
 
@@ -46,10 +51,10 @@ def run_fast_test(
     all_results = []
 
     if test_standard_transformer or test_hybrid_transformer:
-        for model_config_entry in model_configurations:
+        for model_config_entry in tqdm(model_configurations, desc="Testing Transformer Models"):
             model_name_for_hf = ""
             tokenizer_name_for_hf = ""
-
+            set_seed(GENERAL_CONFIG["seed"])
             if isinstance(model_config_entry, str):
                 model_name_for_hf = model_config_entry
                 tokenizer_name_for_hf = model_config_entry
@@ -71,23 +76,23 @@ def run_fast_test(
             # or ensure data is pre-generated for all tokenizers in MODELS_TO_TEST.
             try:
                 logging.info(f"Ensuring datasets are prepared for tokenizer: {tokenizer_name_for_hf}...")
-                # Calling as in your train.py
+                # Calling as in train.py
                 prepare_clickbait17_datasets(tokenizer_name=tokenizer_name_for_hf)
             except Exception as e:
                 logging.warning(f"Warning: Dataset preparation step encountered an issue for {tokenizer_name_for_hf}: {e}")
                 # Depending on implementation, paths might still be found if pre-generated
 
-            train_csv_basic_path, val_csv_basic_path = get_basic_csv_paths(tokenizer_name_for_hf) #
-            train_csv_features_path, val_csv_features_path = get_feature_csv_paths(tokenizer_name_for_hf) #
+            train_csv_basic_path, val_csv_basic_path, test_csv_basic_path = get_basic_csv_paths(tokenizer_name_for_hf) #
+            train_csv_features_path, val_csv_features_path, test_csv_features_path = get_feature_csv_paths(tokenizer_name_for_hf) #
 
             # Generate a unique name for output files/directories for this specific run
             sanitized_model_name = get_safe_name(model_name_for_hf)
-            sanitized_tokenizer_name = model_name_for_hf(tokenizer_name_for_hf)
+            sanitized_tokenizer_name = get_safe_name(tokenizer_name_for_hf)
             run_timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
 
             # 2. Test Standard ClickbaitTransformer
             if test_standard_transformer:
-                if not os.path.exists(train_csv_basic_path) or not os.path.exists(val_csv_basic_path):
+                if not os.path.exists(train_csv_basic_path) or not os.path.exists(test_csv_basic_path):
                     logging.warning(f"Basic dataset CSVs not found for {tokenizer_name_for_hf}. Skipping standard model test.")
                     all_results.append({
                         "model_type": "standard", "model_name": model_name_for_hf,
@@ -107,10 +112,12 @@ def run_fast_test(
                             test_run=True  # Crucial: This modifies TrainingArguments for faster, minimal training
                         )
                         logging.info("Training standard model (fast mode)...")
-                        standard_transformer.train(train_csv_basic_path, val_csv_basic_path)
+                        # sampling_strategy="oversample",
+                        # use_weighted_loss=True
+                        standard_transformer.train(train_csv_basic_path, use_weighted_loss=True)
                         logging.info("Evaluating standard model...")
                         # The .test() method is defined in ClickbaitModelBase
-                        metrics, _ = standard_transformer.test(val_csv_basic_path)
+                        metrics, _ = standard_transformer.test(test_csv_basic_path)
                         logging.info(f"Metrics for {model_name_for_hf} (Standard): {metrics}")
                         all_results.append({
                             "model_type": "standard", "model_name": model_name_for_hf,
@@ -129,7 +136,7 @@ def run_fast_test(
 
             # 3. Test Hybrid ClickbaitFeatureEnhancedTransformer
             if test_hybrid_transformer:
-                if not os.path.exists(train_csv_features_path) or not os.path.exists(val_csv_features_path):
+                if not os.path.exists(train_csv_features_path) or not os.path.exists(test_csv_features_path):
                     logging.warning(f"Feature-augmented dataset CSVs not found for {tokenizer_name_for_hf}. Skipping hybrid model test.")
                     all_results.append({
                         "model_type": "hybrid", "model_name": model_name_for_hf,
@@ -150,9 +157,11 @@ def run_fast_test(
                             test_run=True # Crucial for fast training
                         )
                         logging.info("Training hybrid model (fast mode)...")
-                        hybrid_transformer.train(train_csv_features_path, val_csv_features_path)
+                        # sampling_strategy="oversample",
+                        # use_weighted_loss=True
+                        hybrid_transformer.train(train_csv_features_path, use_weighted_loss=True)
                         logging.info("Evaluating hybrid model...")
-                        metrics, _ = hybrid_transformer.test(val_csv_features_path)
+                        metrics, _ = hybrid_transformer.test(test_csv_features_path)
                         logging.info(f"Metrics for {model_name_for_hf} (Hybrid): {metrics}")
                         all_results.append({
                             "model_type": "hybrid", "model_name": model_name_for_hf,
@@ -182,17 +191,17 @@ def run_fast_test(
         }
 
         # We need a dataset to test on. We can use the one prepared for the default tokenizer.
-        default_tokenizer = HEADLINE_CONTENT_CONFIG.get("tokenizer_name", "bert-base-uncased")
+        default_tokenizer = HEADLINE_CONTENT_CONFIG.get["tokenizer_name"]
         logging.info(f"\nUsing dataset prepared for '{default_tokenizer}' for non-trainable method evaluation.")
         dataset_check(default_tokenizer) # Ensures the data is available
-        _, test_csv_basic_path = get_basic_csv_paths(default_tokenizer)
+        _, _, test_csv_basic_path = get_basic_csv_paths(default_tokenizer)
 
         if not os.path.exists(test_csv_basic_path):
             logging.warning(f"Basic test CSV not found at {test_csv_basic_path}. Cannot run simple method tests.")
         else:
-            for name, method_instance in methods_to_test.items():
+            for name, method_instance in tqdm(methods_to_test.items(), desc="Testing Simple Methods"):
                 try:
-                    # Use our new wrapper to evaluate the method
+                    # Use wrapper to evaluate the method
                     evaluator = SimilarityMethodEvaluator(method=method_instance, model_type=name)
                     metrics, _ = evaluator.test(test_csv_basic_path)
 
@@ -236,10 +245,11 @@ def run_fast_test(
 
 
 if __name__ == "__main__":
+    import logging_config
     transformers_tested = HEADLINE_CONTENT_MODELS_PRETRAINED
     run_fast_test(
         transformers_tested,
-        test_standard_transformer=False,
+        test_standard_transformer=True,
         test_hybrid_transformer=False,
-        test_simple_methods=True
+        test_simple_methods=False
     )

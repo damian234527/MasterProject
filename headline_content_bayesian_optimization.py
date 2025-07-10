@@ -20,7 +20,9 @@ from headline_content_models import ClickbaitTransformer, ClickbaitFeatureEnhanc
 from data.clickbait17.clickbait17_prepare import dataset_check
 from config import GENERAL_CONFIG, HEADLINE_CONTENT_CONFIG, DATASETS_CONFIG
 from typing import Optional
+from utils import set_seed
 import logging
+
 
 logger = logging.getLogger(__name__)
 
@@ -31,20 +33,6 @@ seed = GENERAL_CONFIG["seed"]
 # Directory to save optimization results.
 RESULTS_DIR = "optimization_results"
 os.makedirs(RESULTS_DIR, exist_ok=True)
-
-
-def set_seed(s: int) -> None:
-    """Sets the random seed for all relevant libraries for reproducibility.
-
-    Args:
-        s (int): The seed value to use.
-    """
-    random.seed(s)
-    np.random.seed(s)
-    torch.manual_seed(s)
-    torch.cuda.manual_seed_all(s)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
 
 
 def train_and_evaluate(
@@ -166,8 +154,13 @@ def train_and_evaluate(
         for fold, (train_index, val_index) in enumerate(split_generator, start=1):
             train_df = df.iloc[train_index]
             val_df = df.iloc[val_index]
-            train_path = "temp/train.csv"
-            val_path = "temp/validation.csv"
+
+            # Create a temporary directory for fold data if it doesn't exist
+            temp_dir = "temp"
+            os.makedirs(temp_dir, exist_ok=True)
+
+            train_path = os.path.join(temp_dir, "train.csv")
+            val_path = os.path.join(temp_dir, "validation.csv")
             train_df.to_csv(train_path, index=False)
             val_df.to_csv(val_path, index=False)
 
@@ -176,12 +169,27 @@ def train_and_evaluate(
                 feature_cols = [col for col in train_df.columns if col.startswith("f")]
                 if not feature_cols:
                     raise ValueError("No feature columns found in the dataframe for hybrid model.")
+
+                # Calculate median and IQR from the current training fold.
+                # This prevents data leakage from the validation fold and matches the model's expectation.
+                features_median = train_df[feature_cols].median().tolist()
+                q1 = train_df[feature_cols].quantile(0.25)
+                q3 = train_df[feature_cols].quantile(0.75)
+                features_iqr = (q3 - q1).tolist()
+
+                # Include the original Box-Cox lambdas in the fold's metadata.
                 fold_metadata = {
-                    "features_mean": train_df[feature_cols].mean().tolist(),
-                    "features_std": train_df[feature_cols].std().tolist()
+                    "features_median": features_median,
+                    "features_iqr": features_iqr,
+                    "boxcox_lambdas": original_metadata.get("boxcox_lambdas", {})
                 }
+
                 train_meta_path = train_path.replace(".csv", "_metadata.json")
                 val_meta_path = val_path.replace(".csv", "_metadata.json")
+
+                # Write metadata for both temp train and validation files.
+                # The model loader will use the training fold's stats for both, which is correct.
+
                 with open(train_meta_path, 'w') as f:
                     json.dump(fold_metadata, f, indent=4)
                 with open(val_meta_path, 'w') as f:
@@ -306,23 +314,24 @@ def create_objective_hybrid(train_csv: str, validation_csv: Optional[str] = None
 
 if __name__ == "__main__":
     # Configuration for the optimization run.
-    test = True
-    hybrid = False
+    test = False
+    hybrid = True
 
     # Define the model and tokenizer to be used.
-    model_name = "sentence-transformers/all-MiniLM-L6-v2"
-    tokenizer_name = "sentence-transformers/all-MiniLM-L6-v2"
+    model_name = None
+    tokenizer_name = None
     if model_name == "" or model_name is None:
         model_name = HEADLINE_CONTENT_CONFIG["model_name"]
     if tokenizer_name == "" or tokenizer_name is None:
         tokenizer_name = HEADLINE_CONTENT_CONFIG["tokenizer_name"]
 
     # Number of trials for the optimization.
-    trials_standard = 25
-    trials_initial = 1
+    trials_standard = 20
+    #trials_initial = 1
 
     # Prepare dataset paths.
-    path_basic = dataset_check(tokenizer_name)
+    # path_basic = dataset_check(tokenizer_name)
+    path_basic = "data/clickbait17/models/default/"
     filename_train = f"{DATASETS_CONFIG['dataset_headline_content_name']}_{DATASETS_CONFIG['train_suffix']}"
     filename_validation = f"{DATASETS_CONFIG['dataset_headline_content_name']}_{DATASETS_CONFIG['validation_suffix']}"
     filename_used = filename_train
@@ -330,9 +339,9 @@ if __name__ == "__main__":
     # Run the optimization study.
     if not hybrid:
         study_standard = optuna.create_study(direction="minimize", sampler=optuna.samplers.TPESampler(), pruner=pruner)
-        study_standard.optimize(create_objective_standard(train_csv=os.path.join(path_basic, f"{filename_used}.csv"), test=test, model_name=model_name, tokenizer_name=tokenizer_name), n_trials=2)
+        study_standard.optimize(create_objective_standard(train_csv=os.path.join(path_basic, f"{filename_train}.csv"), validation_csv=os.path.join(path_basic, f"{filename_validation}.csv"), test=test, model_name=model_name, tokenizer_name=tokenizer_name), n_trials=trials_standard)
         logging.info("Best standard transformer params:", study_standard.best_trial.params)
     else:
         study_hybrid = optuna.create_study(direction="minimize", sampler=optuna.samplers.TPESampler(), pruner=pruner)
-        study_hybrid.optimize(create_objective_hybrid(train_csv=os.path.join(path_basic, f"{filename_used}_{DATASETS_CONFIG['features_suffix']}.csv"), test=test, model_name=model_name, tokenizer_name=tokenizer_name), n_trials=2)
+        study_hybrid.optimize(create_objective_hybrid(train_csv=os.path.join(path_basic, f"{filename_train}_{DATASETS_CONFIG['features_suffix']}.csv"), validation_csv=os.path.join(path_basic, f"{filename_validation}_{DATASETS_CONFIG['features_suffix']}.csv"), test=test, model_name=model_name, tokenizer_name=tokenizer_name), n_trials=trials_standard)
         logging.info("Best hybrid transformer params:", study_hybrid.best_trial.params)

@@ -52,6 +52,7 @@ def evaluate_clickbait_predictions(
     threshold: float = GENERAL_CONFIG["clickbait_threshold"],
     save_path: str | None = None,
     verbose: bool = True,
+    time_start = time.perf_counter()
 ) -> Mapping[str, float]:
     """Computes regression and classification metrics for clickbait scores.
 
@@ -79,7 +80,7 @@ def evaluate_clickbait_predictions(
     Raises:
         ValueError: If the shapes of `y_true` and `y_pred` do not match.
     """
-    start = time.perf_counter()
+    start = time_start
 
     y_true = np.asarray(y_true, dtype=float)
     y_pred = np.asarray(y_pred, dtype=float)

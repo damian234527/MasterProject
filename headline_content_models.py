@@ -190,7 +190,7 @@ class ClickbaitModelBase(ABC):
         path = f"./results/{os.path.basename(self.model_name)}"
         metrics = evaluate_clickbait_predictions(true_labels_clean, predictions_clean,
                                                  save_path=os.path.join(path,
-                                                                        f"{os.path.basename(self.model_name)}_test_metrics.csv"))
+                                                                        f"{os.path.basename(self.model_name)}_test_metrics.csv"), time_start=start_time)
         end_time = time.perf_counter()
         total_time = end_time - start_time
         logging.info(f"Testing took {total_time:.4f} seconds.")

@@ -16,10 +16,11 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.svm import LinearSVC
 from sklearn.pipeline import Pipeline
-from sklearn.metrics import classification_report, f1_score
+from sklearn.metrics import classification_report, f1_score, accuracy_score, precision_score, recall_score, mean_squared_error, precision_recall_curve, auc
 import joblib
 import os
 import logging
+import time
 from config import GENERAL_CONFIG
 
 logger = logging.getLogger(__name__)
@@ -109,7 +110,7 @@ class HeadlineClassifier:
         elif self.model_type == "random_forest":
             classifier = RandomForestClassifier(n_estimators=100, random_state=self.random_state)
         elif self.model_type == "svm":
-            classifier = LinearSVC(random_state=self.random_state)
+            classifier = LinearSVC(random_state=self.random_state, dual=True)
         elif self.model_type == "sgd":
             classifier = SGDClassifier(random_state=self.random_state, loss="hinge")
         elif self.model_type == "passive_aggressive":
@@ -158,8 +159,8 @@ class HeadlineClassifier:
         self.is_trained = True
         logger.info(f"Model training completed for {self.model_type}.")
 
-    def test(self, X_test: pd.Series, y_test: pd.Series):
-        """Tests the classifier and returns the F1-score for the positive class.
+    def test(self, X_test: pd.Series, y_test: pd.Series) -> dict:
+        """Tests the classifier and returns a dictionary of performance metrics.
 
         Also logs a full classification report.
 
@@ -168,7 +169,7 @@ class HeadlineClassifier:
             y_test (pd.Series): A pandas Series of true labels for the test data.
 
         Returns:
-            The F1-score for the positive class (label 1).
+            A dictionary containing various performance metrics.
 
         Raises:
             RuntimeError: If the model has not been trained yet.
@@ -177,13 +178,34 @@ class HeadlineClassifier:
             raise RuntimeError("Model is not trained, train the model before testing")
 
         y_pred = self.pipeline.predict(X_test)
-        report = classification_report(y_test, y_pred, output_dict=True)
+
+        # Get scores for PR AUC calculation
+        if hasattr(self.pipeline, "predict_proba"):
+            y_scores = self.pipeline.predict_proba(X_test)[:, 1]
+        elif hasattr(self.pipeline, "decision_function"):
+            y_scores = self.pipeline.decision_function(X_test)
+        else:
+            y_scores = y_pred # Fallback
+
+        # Calculate metrics
+        precision, recall, _ = precision_recall_curve(y_test, y_scores)
+        pr_auc = auc(recall, precision)
+
+        metrics = {
+            "Acc": accuracy_score(y_test, y_pred),
+            "Prec": precision_score(y_test, y_pred, zero_division=0),
+            "Rec": recall_score(y_test, y_pred, zero_division=0),
+            "F1": f1_score(y_test, y_pred, zero_division=0),
+            "PR AUC": pr_auc,
+            "MSE": mean_squared_error(y_test, y_pred)
+        }
+
+        # Log full report
         logger.info(f"Performance for {self.model_type} model")
-        logger.info(f"\n{classification_report(y_test, y_pred)}")
+        logger.info(f"\n{classification_report(y_test, y_pred, zero_division=0)}")
         logger.info(GENERAL_CONFIG["separator"])
 
-        # Return the F1-score for the clickbait class (1).
-        return report['1']['f1-score']
+        return metrics
 
     def save_model(self):
         """Saves the trained pipeline to a file using joblib.
@@ -194,8 +216,9 @@ class HeadlineClassifier:
         if not self.is_trained:
             raise RuntimeError("Model is not trained, train the model before saving")
         # Create the directory if it doesn't exist.
-        if not os.path.exists(os.path.dirname(self.model_path)):
-            os.mkdir(os.path.dirname(self.model_path))
+        model_dir = os.path.dirname(self.model_path)
+        if not os.path.exists(model_dir):
+            os.makedirs(model_dir) # Use makedirs to create parent dirs if needed
         joblib.dump(self.pipeline, self.model_path)
         logger.info(f"Model has been saved in {self.model_path}")
 
@@ -247,37 +270,57 @@ if __name__ == "__main__":
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=.2, random_state=GENERAL_CONFIG["seed"])
 
     # Define the list of model types to train and evaluate.
-    model_types_to_test = ["logistic", "naive_bayes", "random_forest", "svm", "sgd", "passive_aggressive"]
+    model_types_to_test = ["random_forest", "logistic", "sgd", "passive_aggressive", "svm", "naive_bayes"]
 
-    best_score = -1
+    results = []
+    best_f1_score = -1
     best_classifier: HeadlineClassifier = None
-    best_model_type = ""
 
     # Iterate through each model type, train it, and evaluate its performance.
     for model_type in model_types_to_test:
         logger.info(f"\n--- Processing {model_type} Model ---")
         classifier = HeadlineClassifier(model_type=model_type)
 
-        # Train the model on the training data.
+        start_time = time.perf_counter()
+
+        # Train the model
         classifier.train(X_train, y_train)
 
-        # Test the model and get its F1-score.
-        current_score = classifier.test(X_test, y_test)
-        logger.info(f"Score for {model_type}: {current_score}")
+        # Test the model and get its performance metrics
+        metrics = classifier.test(X_test, y_test)
 
-        # If the current model is the best so far, save it.
-        if current_score > best_score:
-            best_score = current_score
+        end_time = time.perf_counter()
+
+        # Add runtime and model type to the metrics
+        metrics["Runtime"] = end_time - start_time
+        metrics["Model"] = model_type
+        results.append(metrics)
+
+        # If the current model is the best so far based on F1, save it.
+        if metrics["F1"] > best_f1_score:
+            best_f1_score = metrics["F1"]
             best_classifier = classifier
-            best_model_type = model_type
-            logger.info(f"New best model found: {best_model_type} with F1-score: {best_score:.4f}")
+            logger.info(f"New best model found: {model_type} with F1-score: {best_f1_score:.4f}")
 
-    # After checking all models, save the best one to a file.
+    # After checking all models, present results in a table.
+    results_df = pd.DataFrame(results).set_index("Model")
+    results_df = results_df[["F1", "PR AUC", "Acc", "Prec", "Rec", "MSE", "Runtime"]]
+
+    print("\n--- Model Comparison ---")
+    print(results_df.to_string(formatters={
+        'F1': '{:.4f}'.format,
+        'PR AUC': '{:.4f}'.format,
+        'Acc': '{:.4f}'.format,
+        'Prec': '{:.4f}'.format,
+        'Rec': '{:.4f}'.format,
+        'MSE': '{:.4f}'.format,
+        'Runtime': '{:.4f}s'.format
+    }))
+    print(GENERAL_CONFIG["separator"])
+
+    # Save the best one to a file.
     if best_classifier:
-        logger.info(f"Saving the best model: {best_model_type} with F1-score: {best_score:.4f}")
-        # Ensure the model is saved with the correct filename.
-        best_classifier.model_path = os.path.join(os.path.dirname(best_classifier.model_path),
-                                                  best_model_type + ".joblib")
+        logger.info(f"Saving the best model: {best_classifier.model_type} with F1-score: {best_f1_score:.4f}")
         best_classifier.save_model()
     else:
         logger.warning("No best model found. This might happen if no models were trained or an error occurred.")

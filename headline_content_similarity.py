@@ -8,7 +8,7 @@ directly using a fine-tuned clickbait detection model's output as a score.
 """
 import os.path
 import sys
-
+import time
 import numpy as np
 import torch
 from abc import ABC, abstractmethod
@@ -32,12 +32,6 @@ import logging_config
 import logging
 
 logger = logging.getLogger(__name__)
-# Set seeds for reproducibility.
-seed = GENERAL_CONFIG["seed"]
-np.random.seed(seed)
-torch.manual_seed(seed)
-torch.cuda.manual_seed_all(seed)
-torch.backends.cudnn.deterministic = True
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -298,6 +292,7 @@ class SimilarityMethodEvaluator:
             of the generated prediction scores.
         """
         logging.info(f"--- Evaluating non-trainable model: {self.model_type} ---")
+        time_start = time.perf_counter()
         try:
             df = pd.read_csv(test_csv).dropna(subset=["headline", "content", "clickbait_score"])
             if "post" not in df.columns:
@@ -320,7 +315,8 @@ class SimilarityMethodEvaluator:
         metrics = evaluate_clickbait_predictions(
             y_true=true_labels,
             y_pred=predictions,
-            verbose=False
+            verbose=False,
+            time_start=time_start
         )
 
         if hasattr(self.method, 'model') and isinstance(self.method.model, torch.nn.Module):
@@ -376,6 +372,8 @@ class HeadlineContentSimilarity:
 
 
 if __name__ == "__main__":
+    from utils import set_seed
+    set_seed(GENERAL_CONFIG["seed"])
     transformers = ["sentence-transformers/all-MiniLM-L6-v2"]
     # tets = ClickbaitModelScore(model_type="standard", model_name_or_path="./models/transformer_bert-base-uncased_bert-base-uncased_1745798398/best_model")
     # print(tets.model.test("./data/clickbait17/models/bert-base-uncased/clickbait17_test.csv"))
@@ -383,20 +381,20 @@ if __name__ == "__main__":
     for transformer in transformers:
         # prepare_cnd_dataset(input_csv_path="data/clickbait_news_detection/raw/train.csv", output_dir="data/clickbait_news_detection/", clickbait17_train_meta_path="data/clickbait17/models/default/clickbait17_train_features_metadata.json", tokenizer_name=transformer)
         directory = get_dataset_folder(transformer)
-        #standard = ClickbaitModelScore(model_type="standard", model_name_or_path=HEADLINE_CONTENT_CONFIG["model_name"], output_directory="models/tets")
+        standard = ClickbaitModelScore(model_type="standard", model_name_or_path=HEADLINE_CONTENT_CONFIG["model_name"], output_directory="models/tets")
         #standard.model.load_model("models/tets_sentence-transformers_all-MiniLM-L6-v2_2025_07_06_13_26_30/best_model")
         # standard.model.train(os.path.join(directory, "clickbait17_train.csv"), os.path.join(directory, "clickbait17_validation.csv"))
-        #standard.model.train(os.path.join(directory, "clickbait17_train.csv"))
+        standard.model.train(os.path.join(directory, "clickbait17_train.csv"))
         # sampling_strategy="oversample",
         # use_weighted_loss=True
-        #standard.model.test(os.path.join(directory, "clickbait17_test.csv"))
+        standard.model.test(os.path.join(directory, "clickbait17_test.csv"))
         #standard.model.test(os.path.join(directory, "clickbait17_test_no_post.csv"))
 
 
-        hybrid = ClickbaitModelScore(model_type="hybrid", model_name_or_path=HEADLINE_CONTENT_CONFIG["model_name"])
+        #hybrid = ClickbaitModelScore(model_type="hybrid", model_name_or_path=HEADLINE_CONTENT_CONFIG["model_name"])
         #hybrid.model.load_model("models/hybrid/best_model")
-        hybrid.model.train(os.path.join(directory, "clickbait17_train_features.csv"))
-        hybrid.model.test(os.path.join(directory, "clickbait17_test_features.csv"))
+        #hybrid.model.train(os.path.join(directory, "clickbait17_train_features.csv"))
+        #hybrid.model.test(os.path.join(directory, "clickbait17_test_features.csv"))
         # hybrid.model.test(os.path.join(directory, "clickbait17_test_features_no_post.csv"))
         # hybrid.model.test("data/clickbait_news_detection/custom_dataset_test_features.csv")
 

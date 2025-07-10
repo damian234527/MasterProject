@@ -73,7 +73,7 @@ def train_headline_content_models(tokenizer_name: str = HEADLINE_CONTENT_CONFIG[
 
     # Train the standard transformer model if requested.
     if model_type == "standard" or model_type == "both":
-        train_csv_basic, val_csv_basic = get_basic_csv_paths(tokenizer_name)
+        train_csv_basic, val_csv_basic, test_csv_basic = get_basic_csv_paths(tokenizer_name)
         logging.info("\nTraining ClickbaitTransformer (Transformer Model)...")
         transformer = ClickbaitTransformer(
             model_name_or_path=tokenizer_name,
@@ -84,7 +84,7 @@ def train_headline_content_models(tokenizer_name: str = HEADLINE_CONTENT_CONFIG[
 
     # Train the feature-enhanced hybrid model if requested.
     if model_type == "hybrid" or model_type == "both":
-        train_csv_features, val_csv_features = get_feature_csv_paths(tokenizer_name)
+        train_csv_features, val_csv_features, test_csv_features = get_feature_csv_paths(tokenizer_name)
         logging.info("\nTraining ClickbaitFeatureEnhancedTransformer (Hybrid Model)...")
         hybrid = ClickbaitFeatureEnhancedTransformer(
             model_name=tokenizer_name,

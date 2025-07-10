@@ -2,16 +2,17 @@
 
 This module sets up the root logger to ensure consistent logging across all
 other modules in the project. It configures two handlers: one that writes
-INFO-level (and higher) logs to a file, and another that writes DEBUG-level
-(and higher) logs to the console. The setup is idempotent, preventing duplicate
-handlers if the module is imported multiple times.
+INFO-level (and higher) logs to a daily file, and another that writes
+DEBUG-level (and higher) logs to the console. The setup is idempotent,
+preventing duplicate handlers if the module is imported multiple times.
 """
 import logging
 import sys
+from datetime import datetime
 
 
 def setup_logging():
-    """Configures the root logger with file and console handlers."""
+    """Configures the root logger with daily file and console handlers."""
     # Get the root logger, which is the ancestor of all other loggers.
     root_logger = logging.getLogger('')
 
@@ -25,9 +26,15 @@ def setup_logging():
     if root_logger.handlers:
         return
 
-    # Create a file handler to write log messages to a file.
+    # --- Create a daily log file ---
+    # Get the current date to create a unique filename for each day.
+    current_date = datetime.now().strftime('%d_%m_%Y')
+    log_filename = f'headline_analysis_{current_date}.log'
+
+    # Create a file handler to write log messages to the daily file.
+    # mode='a' ensures that if the file exists, logs are appended. If not, it's created.
     # This handler is set to log messages of level INFO and higher.
-    file_handler = logging.FileHandler('headline_analysis.log', mode='w')
+    file_handler = logging.FileHandler(log_filename, mode='a')
     file_handler.setLevel(logging.INFO)
     file_formatter = logging.Formatter(
         '[%(asctime)s] {%(pathname)s:%(lineno)d} %(levelname)s - %(message)s',

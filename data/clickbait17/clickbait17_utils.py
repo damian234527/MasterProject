@@ -60,7 +60,9 @@ def get_basic_csv_paths(tokenizer_name: str, use_specific_tokenizer: bool = Fals
     train_csv = os.path.join(folder, f"{DATASETS_CONFIG['dataset_headline_content_name']}_{DATASETS_CONFIG['train_suffix']}.csv")
     val_csv = os.path.join(folder,
                            f"{DATASETS_CONFIG['dataset_headline_content_name']}_{DATASETS_CONFIG['validation_suffix']}.csv")
-    return train_csv, val_csv
+    test_csv = os.path.join(folder,
+                           f"{DATASETS_CONFIG['dataset_headline_content_name']}_{DATASETS_CONFIG['test_suffix']}.csv")
+    return train_csv, val_csv, test_csv
 
 
 def get_feature_csv_paths(tokenizer_name: str, use_specific_tokenizer: bool = False) -> tuple:
@@ -79,7 +81,9 @@ def get_feature_csv_paths(tokenizer_name: str, use_specific_tokenizer: bool = Fa
                              f"{DATASETS_CONFIG['dataset_headline_content_name']}_{DATASETS_CONFIG['train_suffix']}_{DATASETS_CONFIG['features_suffix']}.csv")
     val_csv = os.path.join(folder,
                            f"{DATASETS_CONFIG['dataset_headline_content_name']}_{DATASETS_CONFIG['validation_suffix']}_{DATASETS_CONFIG['features_suffix']}.csv")
-    return train_csv, val_csv
+    test_csv = os.path.join(folder,
+                           f"{DATASETS_CONFIG['dataset_headline_content_name']}_{DATASETS_CONFIG['test_suffix']}_{DATASETS_CONFIG['features_suffix']}.csv")
+    return train_csv, val_csv, test_csv
 
 
 def combined_headline(headline: str = None, post: str = None) -> str:
@@ -100,7 +104,7 @@ def combined_headline(headline: str = None, post: str = None) -> str:
         headline = ""
 
     if post and headline:
-        combined_text = f"{post}: {headline}"
+        combined_text = f"{post}"
     elif post:
         combined_text = post
     elif headline:

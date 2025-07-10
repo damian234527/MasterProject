@@ -14,12 +14,12 @@ GENERAL_CONFIG = {
 
 # Configuration for headline-content deep learning models.
 HEADLINE_CONTENT_CONFIG = {
-    "model_name": "sentence-transformers/all-MiniLM-L6-v2",  # Default shared transformer model.
-    "tokenizer_name": "sentence-transformers/all-MiniLM-L6-v2",  # Default tokenizer.
+    "model_name": "roberta-base",  # Default shared transformer model.
+    "tokenizer_name": "roberta-base",  # Default tokenizer.
     "model_type": ["standard", "hybrid"],  # Supported model architectures.
     "model_path_default": ["models/standard/best_model", "models/hybrid/best_model"],  # Default paths to trained models.
     "length_max": 512,  # Maximum sequence length for tokenization.
-    "batch_size": 32,  # Batch size for training and evaluation.
+    "batch_size": 2,  # Batch size for training and evaluation.
     "epochs": 3,  # Number of training epochs.
     "learning_rate": 2e-5,  # Optimizer learning rate.
     "weight_decay": 0.01,  # L2 regularization strength.
@@ -46,26 +46,43 @@ DATASETS_CONFIG = {
 }
 
 # A list of pre-trained transformer models from Hugging Face for experimentation.
+
 HEADLINE_CONTENT_MODELS_PRETRAINED = [
-    "sentence-transformers/all-MiniLM-L6-v2",
-    "bert-base-uncased",
+    #"bert-base-uncased",
     "google/bert_uncased_L-2_H-128_A-2",
     "roberta-base",
-    "microsoft/mdeberta-v3-base",
-    "christinacdl/mDeBERTa-Multilingual-Opus-mt-Clickbait-Detection",
-    "microsoft/deberta-v3-small",
-    "khalidalt/DeBERTa-v3-large-mnli",
-
-    "distilroberta-base",
+    #"distilroberta-base",
     "valurank/distilroberta-clickbait",
-    "allenai/longformer-base-4096",
-    "albert/albert-base-v2",
-    "google/electra-base-discriminator",
-    "xlnet/xlnet-base-cased",
-    "facebook/bart-large-mnli",
-    "google-t5/t5-base",
-    "cross-encoder/ms-marco-MiniLM-L6-v2"
+    #"microsoft/deberta-v3-small",
+    #"microsoft/mdeberta-v3-base",
+    #"christinacdl/mDeBERTa-Multilingual-Opus-mt-Clickbait-Detection",
+    #"albert/albert-base-v2",
+    #"google/electra-base-discriminator",
+    #"xlnet/xlnet-base-cased",
+    #"facebook/bart-large-mnli",
+    #"allenai/longformer-base-4096",
+    #"sentence-transformers/all-MiniLM-L6-v2",
+    #"cross-encoder/ms-marco-MiniLM-L6-v2"
 ]
+#"google-t5/t5-base", # nie działa
+#"khalidalt/DeBERTa-v3-large-mnli", # za długo leci
+"""
+HEADLINE_CONTENT_MODELS_PRETRAINED = [
+    "sentence-transformers/all-MiniLM-L6-v2",
+    "distilroberta-base"
+    # "microsoft/mdeberta-v3-base",
+    # "christinacdl/mDeBERTa-Multilingual-Opus-mt-Clickbait-Detection",
+    # "khalidalt/DeBERTa-v3-large-mnli",
+    # "facebook/bart-large-mnli",
+    # "google-t5/t5-base",
+]
+"""
+# To be tested with smaller batch size (8)
+# "microsoft/mdeberta-v3-base",
+# "christinacdl/mDeBERTa-Multilingual-Opus-mt-Clickbait-Detection",
+# "khalidalt/DeBERTa-v3-large-mnli",
+# "facebook/bart-large-mnli",
+# "google-t5/t5-base",
 
 # Configuration for the article scraping process.
 ARTICLE_SCRAPING_CONFIG = {

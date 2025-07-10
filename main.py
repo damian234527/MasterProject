@@ -18,6 +18,7 @@ from newspaper import Article, ArticleException
 import joblib
 import spacy
 import sys
+import time
 import numpy as np
 import nltk
 import pandas as pd
@@ -37,6 +38,7 @@ from headline_content_similarity import (
 )
 from headline_content_evaluation import evaluate_clickbait_predictions
 from headline_content_feature_extractor import FeatureExtractor
+from utils import set_seed
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +53,8 @@ except LookupError:
     nltk.download("punkt_tab")
     nltk.download("vader_lexicon")
 
+# Set seed for reproducibility
+set_seed(GENERAL_CONFIG["seed"])
 
 class ArticleScraper:
     """Scrapes the headline and content of an article from a given URL.
@@ -461,7 +465,7 @@ def evaluate_on_test_set(csv_path: str, model_type: str = "logistic"):
     except FileNotFoundError:
         logger.error(f"Test file not found at '{csv_path}'. Please check the path.")
         return
-
+    time_start = time.perf_counter()
     detector = ClickbaitAndSimilarityDetector(headline_model_type=model_type)
 
     y_true = []
@@ -524,7 +528,8 @@ def evaluate_on_test_set(csv_path: str, model_type: str = "logistic"):
     evaluate_clickbait_predictions(
         y_true=y_true,
         y_pred=y_pred_final,
-        verbose=True
+        verbose=True,
+        time_start=time_start
     )
     print("=" * 50)
 
