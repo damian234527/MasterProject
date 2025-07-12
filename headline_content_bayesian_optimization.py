@@ -23,7 +23,6 @@ from typing import Optional
 from utils import set_seed
 import logging
 
-
 logger = logging.getLogger(__name__)
 
 # Optuna pruner to stop unpromising trials early.
@@ -75,6 +74,8 @@ def train_and_evaluate(
         ValueError: If an invalid `model_class` is provided.
         FileNotFoundError: If metadata files for the hybrid model are missing.
     """
+    logger.info(f"--- Starting Trial Number: {trial.number} ---")
+
     # Use a unique seed for each trial to ensure variety in model initialization.
     seed_trial = seed + trial.number
     set_seed(seed_trial)
@@ -143,7 +144,7 @@ def train_and_evaluate(
             kf = StratifiedKFold(n_splits=folds_number, shuffle=True, random_state=seed_trial)
             split_generator = kf.split(df, bins)
         else:
-            logging.warning("Insufficient samples for stratification, using KFold")
+            logger.warning("Insufficient samples for stratification, using KFold")
             kf = KFold(n_splits=folds_number, shuffle=True, random_state=seed_trial)
             split_generator = kf.split(df)
 
@@ -197,7 +198,7 @@ def train_and_evaluate(
 
             # Train and evaluate the model for the current fold.
             model = model_class_ref(**kwargs)
-            model.train(train_path, val_path)
+            model.train(train_path, val_path, use_weighted_loss=True)
             metrics, _ = model.test(val_path)
             nmse = metrics.get("NMSE", float("inf"))
 
@@ -227,7 +228,7 @@ def train_and_evaluate(
     else:
         # If a validation set is provided, train and evaluate once.
         model = model_class_ref(**kwargs)
-        model.train(train_csv, val_csv)
+        model.train(train_csv, val_csv, use_weighted_loss=True)
         metrics, _ = model.test(val_csv)
         metrics_final = {k: float(v) for k, v in metrics.items()}
         objective = 1 - metrics_final["PR-AUC"]
@@ -313,6 +314,7 @@ def create_objective_hybrid(train_csv: str, validation_csv: Optional[str] = None
 
 
 if __name__ == "__main__":
+    import logging_config
     # Configuration for the optimization run.
     test = False
     hybrid = True
@@ -336,12 +338,18 @@ if __name__ == "__main__":
     filename_validation = f"{DATASETS_CONFIG['dataset_headline_content_name']}_{DATASETS_CONFIG['validation_suffix']}"
     filename_used = filename_train
 
+    csv_train_standard = os.path.join(path_basic, f"{filename_train}.csv")
+    csv_val_standard = os.path.join(path_basic, f"{filename_validation}.csv")
+    csv_train_hybrid = os.path.join(path_basic, f"{filename_train}_{DATASETS_CONFIG['features_suffix']}.csv")
+    csv_val_hybrid = os.path.join(path_basic, f"{filename_validation}_{DATASETS_CONFIG['features_suffix']}.csv")
+
+
     # Run the optimization study.
     if not hybrid:
         study_standard = optuna.create_study(direction="minimize", sampler=optuna.samplers.TPESampler(), pruner=pruner)
-        study_standard.optimize(create_objective_standard(train_csv=os.path.join(path_basic, f"{filename_train}.csv"), validation_csv=os.path.join(path_basic, f"{filename_validation}.csv"), test=test, model_name=model_name, tokenizer_name=tokenizer_name), n_trials=trials_standard)
-        logging.info("Best standard transformer params:", study_standard.best_trial.params)
+        study_standard.optimize(create_objective_standard(train_csv=csv_train_standard, validation_csv=None, test=test, model_name=model_name, tokenizer_name=tokenizer_name), n_trials=trials_standard)
+        logger.info(f"Best standard transformer params: {study_standard.best_trial.params}",)
     else:
         study_hybrid = optuna.create_study(direction="minimize", sampler=optuna.samplers.TPESampler(), pruner=pruner)
-        study_hybrid.optimize(create_objective_hybrid(train_csv=os.path.join(path_basic, f"{filename_train}_{DATASETS_CONFIG['features_suffix']}.csv"), validation_csv=os.path.join(path_basic, f"{filename_validation}_{DATASETS_CONFIG['features_suffix']}.csv"), test=test, model_name=model_name, tokenizer_name=tokenizer_name), n_trials=trials_standard)
-        logging.info("Best hybrid transformer params:", study_hybrid.best_trial.params)
+        study_hybrid.optimize(create_objective_hybrid(train_csv=csv_train_hybrid, validation_csv=None, test=test, model_name=model_name, tokenizer_name=tokenizer_name), n_trials=trials_standard)
+        logger.info(f"Best hybrid transformer params: {study_hybrid.best_trial.params}")

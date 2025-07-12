@@ -42,6 +42,7 @@ from nltk.sentiment import SentimentIntensityAnalyzer
 from nltk.tokenize import word_tokenize
 from nltk import pos_tag
 
+logger = logging.getLogger(__name__)
 
 class ClickbaitModelBase(ABC):
     """Abstract Base Class for Clickbait Detection Models.
@@ -157,33 +158,33 @@ class ClickbaitModelBase(ABC):
         # Identify and report any rows that result in NaN or infinity predictions.
         nan_indices = np.where(~np.isfinite(predictions_np))[0]
         if len(nan_indices) > 0:
-            logging.error(f"FATAL: Found {len(nan_indices)} rows that resulted in NaN/inf predictions.")
+            logger.error(f"FATAL: Found {len(nan_indices)} rows that resulted in NaN/inf predictions.")
             problematic_df = test_dataset.data.iloc[nan_indices]
-            logging.error("The following input rows are causing the model to fail:")
+            logger.error("The following input rows are causing the model to fail:")
             with pd.option_context('display.max_rows', None, 'display.max_columns', None, 'display.width', 1000):
-                logging.error(f"\n{problematic_df}")
+                logger.error(f"\n{problematic_df}")
 
             feature_cols = [col for col in problematic_df.columns if col.startswith('f')]
             if feature_cols:
                 nan_in_features = problematic_df[feature_cols].isnull().sum()
                 if nan_in_features.sum() > 0:
-                    logging.error("NaN values were found in these feature columns of the problematic rows:")
-                    logging.error(nan_in_features[nan_in_features > 0])
+                    logger.error("NaN values were found in these feature columns of the problematic rows:")
+                    logger.error(nan_in_features[nan_in_features > 0])
                 else:
-                    logging.info(
+                    logger.info(
                         "No NaN values found in the feature columns. Issue may be from normalization.")
 
         # Clean the data by removing invalid entries before evaluation.
         valid_indices_mask = np.isfinite(true_labels_np) & np.isfinite(predictions_np)
         num_removed = len(true_labels_np) - np.sum(valid_indices_mask)
         if num_removed > 0:
-            logging.warning(f"Removing {num_removed} rows with NaN/inf values from metrics calculation.")
+            logger.warning(f"Removing {num_removed} rows with NaN/inf values from metrics calculation.")
 
         true_labels_clean = true_labels_np[valid_indices_mask]
         predictions_clean = predictions_np[valid_indices_mask]
 
         if len(true_labels_clean) == 0:
-            logging.error("After removing invalid values, the evaluation set is empty. Cannot compute metrics.")
+            logger.error("After removing invalid values, the evaluation set is empty. Cannot compute metrics.")
             return {}, predictions
 
         # Evaluate the predictions using the cleaned data.
@@ -193,7 +194,7 @@ class ClickbaitModelBase(ABC):
                                                                         f"{os.path.basename(self.model_name)}_test_metrics.csv"), time_start=start_time)
         end_time = time.perf_counter()
         total_time = end_time - start_time
-        logging.info(f"Testing took {total_time:.4f} seconds.")
+        logger.info(f"Testing took {total_time:.4f} seconds.")
 
         return metrics, predictions
 
@@ -364,10 +365,12 @@ class ClickbaitTransformer(ClickbaitModelBase):
             fp16=self.fp16 and torch.cuda.is_available(),
             logging_dir=os.path.join(self.output_directory, "logs"),
             load_best_model_at_end=True if not self.test_run and data_validation else False,
+            save_total_limit=1,
             metric_for_best_model="eval_loss",
             greater_is_better=False,
             report_to="none",
             seed=self.seed
+
         )
 
         self.trainer = trainer_class(
@@ -375,6 +378,7 @@ class ClickbaitTransformer(ClickbaitModelBase):
             args=training_args,
             train_dataset=data_train,
             eval_dataset=data_validation,
+            callbacks=[EarlyStoppingCallback(early_stopping_patience=2)],
             **trainer_kwargs
         )
 
@@ -382,6 +386,21 @@ class ClickbaitTransformer(ClickbaitModelBase):
         print(f"Starting training for {self.epochs} epochs...")
         self.trainer.train()
         print("Training finished.")
+
+        try:
+            log_history = self.trainer.state.log_history
+            train_loss = [log['loss'] for log in log_history if 'loss' in log]
+            validation_loss = [log['eval_loss'] for log in log_history if 'eval_loss' in log]
+
+            if train_loss:
+                logging.info("Complete Training Loss History:")
+                logging.info(train_loss)
+
+            if validation_loss:
+                logging.info("Complete Validation Loss History:")
+                logging.info(validation_loss)
+        except Exception as e:
+            logger.info(f"Unable to retrieve Loss History: {e}")
 
         # Replace the current model with the best model found during training.
         self.model = self.trainer.model
@@ -660,7 +679,7 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
                 if os.path.exists(original_meta_path):
                     shutil.copy(original_meta_path, temp_meta_path)
                 else:
-                    logging.warning(f"Metadata for {train_csv} not found. Normalization might fail.")
+                    logger.warning(f"Metadata for {train_csv} not found. Normalization might fail.")
 
             # Load datasets and normalization statistics.
             train_dataset = self._load_data(training_data_path)
@@ -723,6 +742,7 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
                 weight_decay=self.weight_decay,
                 logging_dir=os.path.join(self.output_directory, "logs"),
                 load_best_model_at_end=True if not self.test_run and val_dataset else False,
+                save_total_limit=1,
                 metric_for_best_model="eval_loss",
                 greater_is_better=False,
                 fp16=self.fp16 and torch.cuda.is_available(),
@@ -731,12 +751,31 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
                 seed=self.seed
             )
             self.trainer = trainer_class(
-                model=wrapper_model_for_trainer, args=training_args, train_dataset=train_dataset,
-                eval_dataset=val_dataset, data_collator=self.HybridDataCollator(self.tokenizer, self.length_max),
+                model=wrapper_model_for_trainer,
+                args=training_args,
+                train_dataset=train_dataset,
+                eval_dataset=val_dataset,
+                data_collator=self.HybridDataCollator(self.tokenizer, self.length_max),
+                callbacks=[EarlyStoppingCallback(early_stopping_patience=2)],
                 **trainer_kwargs
             )
             print(f"Starting hybrid model training. Output directory: {self.output_directory}")
             self.trainer.train()
+            try:
+                if self.trainer:
+                    log_history = self.trainer.state.log_history
+                    train_loss = [log['loss'] for log in log_history if 'loss' in log]
+                    validation_loss = [log['eval_loss'] for log in log_history if 'eval_loss' in log]
+
+                    if train_loss:
+                        logger.info("Complete Hybrid Model Training Loss History:")
+                        logger.info(train_loss)
+
+                    if validation_loss:
+                        logger.info("Complete Hybrid Model Validation Loss History:")
+                        logger.info(validation_loss)
+            except Exception as e:
+                logger.info(f"Unable to retrieve Loss History: {e}")
             print("Hybrid model training finished.")
 
             if hasattr(self.trainer, 'model') and self.trainer.model is not None:

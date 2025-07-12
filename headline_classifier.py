@@ -16,7 +16,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.svm import LinearSVC
 from sklearn.pipeline import Pipeline
-from sklearn.metrics import classification_report, f1_score, accuracy_score, precision_score, recall_score, mean_squared_error, precision_recall_curve, auc
+from sklearn.metrics import classification_report, f1_score, accuracy_score, precision_score, recall_score, mean_squared_error, precision_recall_curve, auc, roc_auc_score
 import joblib
 import os
 import logging
@@ -179,7 +179,7 @@ class HeadlineClassifier:
 
         y_pred = self.pipeline.predict(X_test)
 
-        # Get scores for PR AUC calculation
+        # Get scores for PR AUC and ROC AUC calculation
         if hasattr(self.pipeline, "predict_proba"):
             y_scores = self.pipeline.predict_proba(X_test)[:, 1]
         elif hasattr(self.pipeline, "decision_function"):
@@ -190,6 +190,7 @@ class HeadlineClassifier:
         # Calculate metrics
         precision, recall, _ = precision_recall_curve(y_test, y_scores)
         pr_auc = auc(recall, precision)
+        roc_auc = roc_auc_score(y_test, y_scores)
 
         metrics = {
             "Acc": accuracy_score(y_test, y_pred),
@@ -197,6 +198,7 @@ class HeadlineClassifier:
             "Rec": recall_score(y_test, y_pred, zero_division=0),
             "F1": f1_score(y_test, y_pred, zero_division=0),
             "PR AUC": pr_auc,
+            "ROC AUC": roc_auc,
             "MSE": mean_squared_error(y_test, y_pred)
         }
 
@@ -304,12 +306,13 @@ if __name__ == "__main__":
 
     # After checking all models, present results in a table.
     results_df = pd.DataFrame(results).set_index("Model")
-    results_df = results_df[["F1", "PR AUC", "Acc", "Prec", "Rec", "MSE", "Runtime"]]
+    results_df = results_df[["F1", "PR AUC", "ROC AUC", "Acc", "Prec", "Rec", "MSE", "Runtime"]]
 
     print("\n--- Model Comparison ---")
     print(results_df.to_string(formatters={
         'F1': '{:.4f}'.format,
         'PR AUC': '{:.4f}'.format,
+        'ROC AUC': '{:.4f}'.format,
         'Acc': '{:.4f}'.format,
         'Prec': '{:.4f}'.format,
         'Rec': '{:.4f}'.format,

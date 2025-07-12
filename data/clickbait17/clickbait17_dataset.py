@@ -205,10 +205,13 @@ class Clickbait17FeatureAugmentedDataset(ClickbaitDataset):
         # Load the pre-calculated features directly from the DataFrame.
         features = torch.from_numpy(np.asarray(row[self.feature_columns].values, dtype=np.float32))
 
+        median_cpu = self.feature_median.to(features.device)
+        iqr_cpu = self.feature_iqr.to(features.device)
+
         # Normalize the features using the stored median and IQR.
-        iqr_safe = self.feature_iqr.clone()
-        iqr_safe[self.feature_iqr < 1e-5] = 1.0
-        features = (features - self.feature_median) / iqr_safe
+        iqr_safe = iqr_cpu.clone()
+        iqr_safe[iqr_cpu < 1e-5] = 1.0
+        features = (features - median_cpu) / iqr_safe
 
         combined_text = combined_headline(headline=headline, post=post)
 

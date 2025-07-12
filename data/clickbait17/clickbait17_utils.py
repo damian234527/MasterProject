@@ -104,7 +104,7 @@ def combined_headline(headline: str = None, post: str = None) -> str:
         headline = ""
 
     if post and headline:
-        combined_text = f"{post}"
+        combined_text = f"{headline}: {post}"
     elif post:
         combined_text = post
     elif headline:
@@ -196,4 +196,4 @@ def create_blank_post_csv(original_csv_path: str = "models/default/clickbait17_t
 
 if __name__ == "__main__":
     # Example usage to generate a test set version with no post text.
-    create_blank_post_csv("models/default/clickbait17_test.csv")
+    create_blank_post_csv("models/default/clickbait17_test_features.csv")
