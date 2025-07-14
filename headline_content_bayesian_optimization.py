@@ -151,6 +151,11 @@ def train_and_evaluate(
         fold_losses: list[float] = []
         fold_metrics: list[dict[str, float]] = []
 
+        # Model initialization
+        model = model_class_ref(**kwargs)
+        # State_dict with the model's weights.
+        initial_state = model.model.state_dict()
+
         # Iterate over each fold.
         for fold, (train_index, val_index) in enumerate(split_generator, start=1):
             train_df = df.iloc[train_index]
@@ -197,7 +202,8 @@ def train_and_evaluate(
                     json.dump(fold_metadata, f, indent=4)
 
             # Train and evaluate the model for the current fold.
-            model = model_class_ref(**kwargs)
+            logger.info(f"Resetting model weights for Fold {fold}...")
+            model.model.load_state_dict(initial_state)
             model.train(train_path, val_path, use_weighted_loss=True)
             metrics, _ = model.test(val_path)
             nmse = metrics.get("NMSE", float("inf"))

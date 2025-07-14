@@ -378,7 +378,7 @@ class ClickbaitTransformer(ClickbaitModelBase):
             args=training_args,
             train_dataset=data_train,
             eval_dataset=data_validation,
-            callbacks=[EarlyStoppingCallback(early_stopping_patience=2)],
+            callbacks=[EarlyStoppingCallback(early_stopping_patience=2)] if data_validation else None,
             **trainer_kwargs
         )
 
@@ -509,7 +509,8 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
                 nn.Linear(bert_hidden_size * 2, bert_hidden_size),
                 nn.LeakyReLU(),
                 nn.Dropout(dropout_rate),
-                nn.Linear(bert_hidden_size, 1)
+                nn.Linear(bert_hidden_size, 1),
+                nn.Sigmoid()
             )
 
         def forward(self, input_ids, attention_mask, features):
@@ -756,7 +757,7 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
                 train_dataset=train_dataset,
                 eval_dataset=val_dataset,
                 data_collator=self.HybridDataCollator(self.tokenizer, self.length_max),
-                callbacks=[EarlyStoppingCallback(early_stopping_patience=2)],
+                callbacks=[EarlyStoppingCallback(early_stopping_patience=2)]  if val_dataset else None,
                 **trainer_kwargs
             )
             print(f"Starting hybrid model training. Output directory: {self.output_directory}")
