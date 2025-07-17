@@ -42,7 +42,7 @@ def train_and_evaluate(
         test_run: bool = False,
         model_name: str = None,
         tokenizer_name: str = None,
-        folds_number: int = 5):
+        folds_number: int = 3):
     """The main objective function for an Optuna trial.
 
     This function is called by Optuna for each trial. It defines the
@@ -65,7 +65,7 @@ def train_and_evaluate(
         tokenizer_name (str, optional): The name of the tokenizer to use.
             Defaults to None.
         folds_number (int, optional): The number of folds for cross-validation.
-            Defaults to 5.
+            Defaults to 3.
 
     Returns:
         The objective value to be minimized (1 - PR-AUC score).
@@ -211,14 +211,15 @@ def train_and_evaluate(
             fold_losses.append(nmse)
             fold_metrics.append({"fold": fold, **{k: float(v) for k, v in metrics.items()}})
 
-            # Clean up memory to prevent CUDA out-of-memory errors.
-            del model
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+        # Clean up memory to prevent CUDA out-of-memory errors.
+        del model
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         # Calculate the mean metrics across all folds.
         df_folds = pd.DataFrame(fold_metrics)
+        df_metrics_only = df_folds.drop(columns=["fold"])
         df_mean = df_folds.mean(numeric_only=True).to_dict()
         objective = 1 - df_mean["PR-AUC"]
         metrics_final = df_mean
@@ -323,7 +324,7 @@ if __name__ == "__main__":
     import logging_config
     # Configuration for the optimization run.
     test = False
-    hybrid = True
+    hybrid = False
 
     # Define the model and tokenizer to be used.
     model_name = None
@@ -334,7 +335,7 @@ if __name__ == "__main__":
         tokenizer_name = HEADLINE_CONTENT_CONFIG["tokenizer_name"]
 
     # Number of trials for the optimization.
-    trials_standard = 20
+    trials_standard = 10
     #trials_initial = 1
 
     # Prepare dataset paths.

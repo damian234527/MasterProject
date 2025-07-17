@@ -83,9 +83,9 @@ def run_fast_test(
                 # Depending on implementation, paths might still be found if pre-generated
 
             train_csv_basic_path, val_csv_basic_path, test_csv_basic_path = get_basic_csv_paths(tokenizer_name_for_hf) #
-            # test_csv_basic_path = "data/clickbait17/models/default/clickbait17_test_no_post.csv"
+            # test_csv_basic_path = "data/clickbait17/models/default/clickbait17_test_headline_post.csv"
             train_csv_features_path, val_csv_features_path, test_csv_features_path = get_feature_csv_paths(tokenizer_name_for_hf) #
-            # test_csv_features_path = "data/clickbait17/models/default/clickbait17_test_features_no_post.csv"
+            # test_csv_features_path = "data/clickbait17/models/default/clickbait17_test_features_headline_post.csv"
 
             # Generate a unique name for output files/directories for this specific run
             sanitized_model_name = get_safe_name(model_name_for_hf)
@@ -251,7 +251,7 @@ if __name__ == "__main__":
     transformers_tested = HEADLINE_CONTENT_MODELS_PRETRAINED
     run_fast_test(
         transformers_tested,
-        test_standard_transformer=True,
-        test_hybrid_transformer=False,
+        test_standard_transformer=False,
+        test_hybrid_transformer=True,
         test_simple_methods=False
     )

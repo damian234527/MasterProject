@@ -28,6 +28,7 @@ import string
 from scipy.stats import boxcox
 from torch import nn
 from data.clickbait17.clickbait17_dataset import Clickbait17Dataset, Clickbait17FeatureAugmentedDataset
+from data.clickbait17.clickbait17_utils import combined_headline
 from headline_content_feature_extractor import FeatureExtractor
 from headline_content_evaluation import evaluate_clickbait_predictions
 from config import HEADLINE_CONTENT_CONFIG, GENERAL_CONFIG
@@ -337,7 +338,7 @@ class ClickbaitTransformer(ClickbaitModelBase):
             return
 
         data_train = self._load_data(df_train)
-        data_validation = self.test(validation_csv) if validation_csv else None
+        data_validation = self._load_data(validation_csv) if validation_csv else None
 
         if len(data_train) == 0:
             print("Error: Training dataset is empty. Aborting training.")
@@ -431,13 +432,7 @@ class ClickbaitTransformer(ClickbaitModelBase):
         self.model.to(self.device)
         self.model.eval()
 
-        combined_text = ""
-        if post and headline:
-            combined_text = f"{post}: {headline}"
-        elif post:
-            combined_text = post
-        elif headline:
-            combined_text = headline
+        combined_text = combined_headline(headline=headline, post=post)
 
         inputs = self.tokenizer(
             text=combined_text,
@@ -842,7 +837,7 @@ class ClickbaitFeatureEnhancedTransformer(ClickbaitModelBase):
         features_tensor = features_normalised.unsqueeze(0)
 
         # Tokenize text inputs.
-        combined_text = f"{post}: {headline}" if post and headline else post or headline
+        combined_text = combined_headline(headline=headline, post=post)
         inputs = self.tokenizer(
             text=combined_text, text_pair=content, return_tensors="pt", truncation="longest_first",
             padding=True, max_length=self.length_max

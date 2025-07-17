@@ -104,7 +104,7 @@ def combined_headline(headline: str = None, post: str = None) -> str:
         headline = ""
 
     if post and headline:
-        combined_text = f"{headline}: {post}"
+        combined_text = f"{post}"
     elif post:
         combined_text = post
     elif headline:
@@ -156,7 +156,7 @@ def combined_headline_series(df):
     return new_headline_series
 
 
-def create_blank_post_csv(original_csv_path: str = "models/default/clickbait17_test.csv"):
+def create_blank_post_csv(original_csv_path: str = "models/default/clickbait17_test.csv", headline_as_post: bool = False):
     """Creates a version of a dataset CSV with the 'post' column blanked out.
 
     This is used for testing model performance in scenarios where no social
@@ -167,12 +167,12 @@ def create_blank_post_csv(original_csv_path: str = "models/default/clickbait17_t
         original_csv_path (str): The path to the original dataset CSV.
     """
     path, file_extension = os.path.splitext(original_csv_path)
-    new_csv_path = f"{path}_no_post{file_extension}"
+    new_csv_path = f"{path}_headline_post{file_extension}" if headline_as_post else f"{path}_no_post{file_extension}"
     df = pd.read_csv(original_csv_path)
 
     # For basic CSVs, simply clear the 'post' column.
     if "_features" not in original_csv_path:
-        df["post"] = ""
+        df["post"] = df["headline"] if headline_as_post else ""
         df.to_csv(new_csv_path, index=False, quoting=csv.QUOTE_ALL)
         return df
     # For feature CSVs, re-extract all features with an empty post.
@@ -182,7 +182,10 @@ def create_blank_post_csv(original_csv_path: str = "models/default/clickbait17_t
         updated_rows = []
         for _, row in tqdm(df.iterrows(), total=df.shape[0], desc="Processing rows"):
             new_row = row.copy()
-            post_text = ""
+            if headline_as_post:
+                post_text = new_row["headline"]
+            else:
+                post_text = ""
             base_features = feature_extractor.extract(post_text, new_row["headline"], new_row["content"])
             all_features = base_features + [new_row["headline_score"]]
             new_row["post"] = post_text
@@ -196,4 +199,4 @@ def create_blank_post_csv(original_csv_path: str = "models/default/clickbait17_t
 
 if __name__ == "__main__":
     # Example usage to generate a test set version with no post text.
-    create_blank_post_csv("models/default/clickbait17_test_features.csv")
+    create_blank_post_csv("models/default/clickbait17_test_features.csv", headline_as_post=True)

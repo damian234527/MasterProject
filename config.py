@@ -16,16 +16,16 @@ GENERAL_CONFIG = {
 # "roberta-base",
 # Configuration for headline-content deep learning models.
 HEADLINE_CONTENT_CONFIG = {
-    "model_name": "valurank/distilroberta-clickbait",  # Default shared transformer model.
-    "tokenizer_name": "valurank/distilroberta-clickbait",  # Default tokenizer.
+    "model_name": "google/bert_uncased_L-2_H-128_A-2",  # Default shared transformer model.
+    "tokenizer_name": "google/bert_uncased_L-2_H-128_A-2",  # Default tokenizer.
     "model_type": ["standard", "hybrid"],  # Supported model architectures.
     "model_path_default": ["models/standard/best_model", "models/hybrid/best_model"],  # Default paths to trained models.
     "length_max": 512,  # Maximum sequence length for tokenization.
     "batch_size": 2,  # Batch size for training and evaluation.
-    "epochs": 3,  # Number of training epochs.
-    "learning_rate": 2e-5, # 8.3089e-6,  # Optimizer learning rate.
-    "weight_decay": 0.01,  # 0.056,  # L2 regularization strength.
-    "dropout_rate": 0.3,   # 0.418,  # Dropout rate for the hybrid model's classifier head.
+    "epochs": 8,  # Number of training epochs.
+    "learning_rate": 4.96397e-5,    # 2.44759e-5,    # 2e-5, # Optimizer learning rate.
+    "weight_decay": 0.174178,       # 0.268585,      # 0.01,  # L2 regularization strength.
+    "dropout_rate": 0.379901,       # 0.445187,      # 0.3,   # Dropout rate for the hybrid model's classifier head.
     "fp16": True,  # Whether to use 16-bit mixed-precision training.
     "output_directory": "models"  # Base directory for saving model outputs.
 }

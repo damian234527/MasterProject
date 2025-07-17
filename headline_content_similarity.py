@@ -381,22 +381,23 @@ if __name__ == "__main__":
     for transformer in transformers:
         # prepare_cnd_dataset(input_csv_path="data/clickbait_news_detection/raw/train.csv", output_dir="data/clickbait_news_detection/", clickbait17_train_meta_path="data/clickbait17/models/default/clickbait17_train_features_metadata.json", tokenizer_name=transformer)
         directory = get_dataset_folder(transformer)
-        standard = ClickbaitModelScore(model_type="standard", model_name_or_path=HEADLINE_CONTENT_CONFIG["model_name"], output_directory="models/tets")
-        #standard.model.load_model("models/tets_sentence-transformers_all-MiniLM-L6-v2_2025_07_06_13_26_30/best_model")
+        standard = ClickbaitModelScore(model_type="standard", model_name_or_path=HEADLINE_CONTENT_CONFIG["model_name"], output_directory="models/best")
+        standard.model.load_model("models/best_roberta_standard/best_model")
         # standard.model.train(os.path.join(directory, "clickbait17_train.csv"), os.path.join(directory, "clickbait17_validation.csv"))
-        standard.model.train(os.path.join(directory, "clickbait17_train.csv"), use_weighted_loss=True)
+        #standard.model.train(os.path.join(directory, "clickbait17_train.csv"), use_weighted_loss=True)
         # sampling_strategy="oversample",
         # use_weighted_loss=True
         standard.model.test(os.path.join(directory, "clickbait17_test.csv"))
         #standard.model.test(os.path.join(directory, "clickbait17_test_no_post.csv"))
+        # standard.model.test("data/clickbait_news_detection/clickbait_news_detection.csv")
 
 
         #hybrid = ClickbaitModelScore(model_type="hybrid", model_name_or_path=HEADLINE_CONTENT_CONFIG["model_name"])
-        #hybrid.model.load_model("models/hybrid/best_model")
-        #hybrid.model.train(os.path.join(directory, "clickbait17_train_features.csv"), os.path.join(directory, "clickbait17_validation_features.csv"), use_weighted_loss=True)
-        #hybrid.model.test(os.path.join(directory, "clickbait17_test_features.csv"))
-        # hybrid.model.test(os.path.join(directory, "clickbait17_test_features_no_post.csv"))
-        # hybrid.model.test("data/clickbait_news_detection/custom_dataset_test_features.csv")
+        #hybrid.model.load_model("models/best_bert_hybrid/best_model")
+        # hybrid.model.train(os.path.join(directory, "clickbait17_train_features.csv"), use_weighted_loss=True)
+        # hybrid.model.test(os.path.join(directory, "clickbait17_test_features.csv"))
+        #hybrid.model.test(os.path.join(directory, "clickbait17_test_features_no_post.csv"))
+        #hybrid.model.test("data/clickbait_news_detection/clickbait_news_detection_features.csv")
 
 
         #standard.model.train(os.path.join(directory, "clickbait17_train.csv"), os.path.join(directory, "clickbait17_validation.csv"))

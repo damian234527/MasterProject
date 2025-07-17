@@ -370,8 +370,8 @@ def main(articles: list[dict], model_type: str = "logistic"):
             # Perform detection, comparison, and feature extraction.
             is_clickbait, clickbait_score = detector.detect_clickbait(headline)
             clickbait_status = "CLICKBAIT" if is_clickbait else "NOT CLICKBAIT"
-            print(f"📰 Headline: '{headline}'")
-            print(f"🎯 Clickbait Detection Result: {clickbait_status} (Score: {clickbait_score:.4f})\n")
+            print(f"Headline: '{headline}'")
+            print(f"Clickbait Detection Result: {clickbait_status} (Score: {clickbait_score:.4f})\n")
 
             similarity_scores = detector.compare_similarity(headline, content, post=post,
                                                             headline_score=clickbait_score)
@@ -415,13 +415,13 @@ def main(articles: list[dict], model_type: str = "logistic"):
         # Display the main analysis summary.
         display_cols = base_cols + similarity_cols
         print("\n\n" + "=" * 50)
-        print("📊 HEADLINE ANALYSIS SUMMARY")
+        print("HEADLINE ANALYSIS SUMMARY")
         print("=" * 50)
         print(df[display_cols].to_string())
 
         # Display the extracted features.
         print("\n\n" + "=" * 50)
-        print("📝 EXTRACTED ARTICLE FEATURES")
+        print("EXTRACTED ARTICLE FEATURES")
         print("=" * 50)
         feature_display_cols = ["URL"] + feature_cols
         print(df[feature_display_cols].to_string())
@@ -432,7 +432,7 @@ def main(articles: list[dict], model_type: str = "logistic"):
             if numeric_cols:
                 stats_df = df[numeric_cols].agg(['mean', 'median']).round(4)
                 print("\n\n" + "=" * 50)
-                print("📈 AGGREGATE STATISTICS (for processed articles)")
+                print("AGGREGATE STATISTICS (for processed articles)")
                 print("=" * 50)
                 print(stats_df.to_string())
 
@@ -440,10 +440,10 @@ def main(articles: list[dict], model_type: str = "logistic"):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"headline_analysis_results_{timestamp}.csv"
         df.to_csv(filename, index=False)
-        print(f"\n\n✅ All results saved to '{filename}'.")
+        print(f"\n\nAll results saved to '{filename}'.")
 
 
-def evaluate_on_test_set(csv_path: str, model_type: str = "logistic"):
+def evaluate_on_test_set(csv_path: str, model_type: str = "naive_bayes"):
     """Evaluates the combined model performance on a labeled test set.
 
     This function reads a CSV file containing headlines, content, posts, and
@@ -471,9 +471,9 @@ def evaluate_on_test_set(csv_path: str, model_type: str = "logistic"):
     y_true = []
     y_pred_final = []
 
-    # These weights are only used for standard (non-hybrid) models.
+    # The weights are only used for standard (non-hybrid) model
     HEADLINE_MODEL_WEIGHT = 1
-    CONTENT_MODEL_WEIGHT = 2
+    CONTENT_MODEL_WEIGHT = 9
     TOTAL_WEIGHT = HEADLINE_MODEL_WEIGHT + CONTENT_MODEL_WEIGHT
 
     print("Processing test set to generate predictions...")
@@ -561,9 +561,9 @@ if __name__ == "__main__":
     else:
         # Run the main analysis function with the debug examples.
         print("\n--- Running Main Analysis on Debug Articles ---")
-        main(debug_articles)
+        # main(debug_articles)
 
         # Run the evaluation on the Clickbait17 test set.
-        # print("\n--- Running Evaluation on Clickbait17 Test Set ---")
-        # test_csv_path = "data/clickbait17/models/sentence-transformers_all-MiniLM-L6-v2/clickbait17_test_features.csv"
-        # evaluate_on_test_set(csv_path=test_csv_path)
+        print("\n--- Running Evaluation on Clickbait17 Test Set ---")
+        test_csv_path = "data/clickbait17/models/default/clickbait17_test_features.csv"
+        evaluate_on_test_set(csv_path=test_csv_path)
