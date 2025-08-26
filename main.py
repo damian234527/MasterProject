@@ -170,8 +170,8 @@ class ClickbaitAndSimilarityDetector:
     def __init__(self,
                  headline_model_path: str = HEADLINE_CONFIG["model_path"],
                  headline_model_type: str = HEADLINE_CONFIG["model_type"],
-                 headline_content_model_path: str = HEADLINE_CONTENT_CONFIG["model_path_default"][1],
-                 headline_content_model_type: str = HEADLINE_CONTENT_CONFIG["model_type"][1],
+                 headline_content_model_path: str = HEADLINE_CONTENT_CONFIG["model_path_default"][0],
+                 headline_content_model_type: str = HEADLINE_CONTENT_CONFIG["model_type"][0],
                  headline_content_transformer: str = HEADLINE_CONTENT_CONFIG["model_name"]):
         """Initializes the detector and loads all required models.
 
@@ -300,7 +300,10 @@ class ClickbaitAndSimilarityDetector:
         return self.feature_extractor.extract(post, headline, content, as_dict=True)
 
 
-def main(articles: list[dict], model_type: str = "logistic"):
+def main(articles: list[dict],
+         headline_model_type: str = "naive_bayes",
+         headline_content_model_type: str = HEADLINE_CONTENT_CONFIG["model_type"][0],
+         headline_content_model_path: str = HEADLINE_CONTENT_CONFIG["model_path_default"][0]):
     """Processes a list of articles for clickbait and similarity analysis.
 
     This function iterates through a list of articles, scrapes their content,
@@ -312,7 +315,10 @@ def main(articles: list[dict], model_type: str = "logistic"):
         articles (list[dict]): A list where each element is a dictionary
             containing a 'url' key and an optional 'post' key. This function
             also handles a single URL string or a list of URL strings.
-        model_type (str): The type of headline classifier to use.
+        headline_model_type (str): The type of headline classifier to use.
+        headline_content_model_type (str): The type of headline-content model
+            ('standard' or 'hybrid').
+        headline_content_model_path (str): The path to the saved headline-content model.
     """
     # Standardize various input formats into a list of dictionaries.
     if isinstance(articles, dict):
@@ -322,7 +328,9 @@ def main(articles: list[dict], model_type: str = "logistic"):
     elif isinstance(articles, list) and all(isinstance(i, str) for i in articles):
         articles = [{'url': url} for url in articles]
 
-    detector = ClickbaitAndSimilarityDetector(headline_model_type=model_type)
+    detector = ClickbaitAndSimilarityDetector(headline_model_type=headline_model_type,
+                                              headline_content_model_type=headline_content_model_type,
+                                              headline_content_model_path=headline_content_model_path)
     results = []
     article_features = {}
 
@@ -443,7 +451,10 @@ def main(articles: list[dict], model_type: str = "logistic"):
         print(f"\n\nAll results saved to '{filename}'.")
 
 
-def evaluate_on_test_set(csv_path: str, model_type: str = "naive_bayes"):
+def evaluate_on_test_set(csv_path: str,
+                         headline_model_type: str = "naive_bayes",
+                         headline_content_model_type: str = HEADLINE_CONTENT_CONFIG["model_type"][0],
+                         headline_content_model_path: str = HEADLINE_CONTENT_CONFIG["model_path_default"][0]):
     """Evaluates the combined model performance on a labeled test set.
 
     This function reads a CSV file containing headlines, content, posts, and
@@ -452,7 +463,10 @@ def evaluate_on_test_set(csv_path: str, model_type: str = "naive_bayes"):
 
     Args:
         csv_path (str): The file path to the test CSV.
-        model_type (str): The type of headline classifier to use.
+        headline_model_type (str): The type of headline classifier to use.
+        headline_content_model_type (str): The type of headline-content model
+            ('standard' or 'hybrid').
+        headline_content_model_path (str): The path to the saved headline-content model.
     """
     print(f"Loading test data from: {csv_path}")
     try:
@@ -466,14 +480,16 @@ def evaluate_on_test_set(csv_path: str, model_type: str = "naive_bayes"):
         logger.error(f"Test file not found at '{csv_path}'. Please check the path.")
         return
     time_start = time.perf_counter()
-    detector = ClickbaitAndSimilarityDetector(headline_model_type=model_type)
+    detector = ClickbaitAndSimilarityDetector(headline_model_type=headline_model_type,
+                                              headline_content_model_type=headline_content_model_type,
+                                              headline_content_model_path=headline_content_model_path)
 
     y_true = []
     y_pred_final = []
 
     # The weights are only used for standard (non-hybrid) model
     HEADLINE_MODEL_WEIGHT = 1
-    CONTENT_MODEL_WEIGHT = 9
+    CONTENT_MODEL_WEIGHT = 4
     TOTAL_WEIGHT = HEADLINE_MODEL_WEIGHT + CONTENT_MODEL_WEIGHT
 
     print("Processing test set to generate predictions...")
@@ -559,11 +575,15 @@ if __name__ == "__main__":
         articles_from_args = [{'url': url} for url in urls_from_args]
         main(articles_from_args, model_type_from_args)
     else:
+        standard_model = HEADLINE_CONTENT_CONFIG["model_type"][0]
+        standard_model_path = HEADLINE_CONTENT_CONFIG["model_path_default"][0]
+        hybrid_model = HEADLINE_CONTENT_CONFIG["model_type"][0]
+        hybrid_model_path = HEADLINE_CONTENT_CONFIG["model_path_default"][1]
         # Run the main analysis function with the debug examples.
         print("\n--- Running Main Analysis on Debug Articles ---")
         # main(debug_articles)
 
         # Run the evaluation on the Clickbait17 test set.
         print("\n--- Running Evaluation on Clickbait17 Test Set ---")
-        test_csv_path = "data/clickbait17/models/default/clickbait17_test_features.csv"
-        evaluate_on_test_set(csv_path=test_csv_path)
+        test_csv_path = "data/clickbait17/models/default/clickbait17_test.csv"
+        evaluate_on_test_set(csv_path=test_csv_path, headline_content_model_type=standard_model, headline_content_model_path=standard_model_path)

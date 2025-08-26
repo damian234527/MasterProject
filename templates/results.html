@@ -93,7 +93,7 @@
     <h1>Analysis Results</h1>
     <a href="/">&larr; Analyze Another Article</a>
 
-    <div class="result-box">
+<div class="result-box">
         <h3>Article Headline</h3>
         <p><em>"{{ result.headline }}"</em></p>
 
@@ -102,13 +102,39 @@
         <hr>
 
         <h3>Detection Result</h3>
-        <p class="{% if result.is_clickbait == 'CLICKBAIT' %}clickbait{% else %}not-clickbait{% endif %}">
-            {{ result.is_clickbait }}
+
+        {# Define boolean variables for easier reading #}
+        {% set is_headline_cb = result.is_headline_clickbait %}
+        {% set is_content_cb = result.transformer_score >= 0.5 %}
+
+        {# Headline and content are clickbait #}
+        {% if is_headline_cb and is_content_cb %}
+            <p class="clickbait">CLICKBAIT</p>
+            <p>Both headline and content analysis suggest the article is clickbait.</p>
+
+        {# Only headline is clickbait #}
+        {% elif is_headline_cb and not is_content_cb %}
+            <p class="not-clickbait">CLICKBAIT HEADLINE</p>
+            <p>The headline suggests the article is clickbait, but the content does not.</p>
+
+        {# Only content is clickbait #}
+        {% elif not is_headline_cb and is_content_cb %}
+            <p class="clickbait">CLICKBAIT CONTENT</p>
+            <p>The headline does not suggest clickbait, but the content analysis does.</p>
+
+        {# None is clickbait #}
+        {% else %}
+            <p class="not-clickbait">NOT CLICKBAIT</p>
+            <p>Neither the headline nor the content analysis suggest the article is clickbait.</p>
+        {% endif %}
+
+        <p style="margin-top: 15px;">
+            <strong>Headline Score:</strong> {{ result.clickbait_score }}<br>
+            <strong>Headline-content Score:</strong> {{ "%.4f"|format(result.transformer_score) }}
         </p>
-        <p><strong>Confidence Score:</strong> {{ result.clickbait_score }}</p>
     </div>
 
-    <h2>Similarity Scores & Percentile Rank</h2>
+    <h2>Similarity Scores</h2>
     <table>
         <thead>
             <tr>

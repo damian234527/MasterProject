@@ -16,10 +16,10 @@ GENERAL_CONFIG = {
 # "roberta-base",
 # Configuration for headline-content deep learning models.
 HEADLINE_CONTENT_CONFIG = {
-    "model_name": "google/bert_uncased_L-2_H-128_A-2",  # Default shared transformer model.
-    "tokenizer_name": "google/bert_uncased_L-2_H-128_A-2",  # Default tokenizer.
+    "model_name": "roberta-base",  # Default shared transformer model.
+    "tokenizer_name": "roberta-base",  # Default tokenizer.
     "model_type": ["standard", "hybrid"],  # Supported model architectures.
-    "model_path_default": ["models/standard/best_model", "models/hybrid/best_model"],  # Default paths to trained models.
+    "model_path_default": ["models/best_roberta_standard/best_model", "models/best_bert_hybrid/best_model"],  # Default paths to trained models.
     "length_max": 512,  # Maximum sequence length for tokenization.
     "batch_size": 2,  # Batch size for training and evaluation.
     "epochs": 8,  # Number of training epochs.

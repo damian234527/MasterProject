@@ -144,14 +144,17 @@ def analyze():
         else:
             filtered_explanations = explanations
 
+        similarity_scores = analysis_data["similarity_scores"]
+        clickbait_content_score = similarity_scores.pop("Clickbait Transformer Model", 0.0)
         # Package all data into a final 'results' dictionary for the template.
         results = {
             "url": url,
             "headline": analysis_data["headline"],
             "post_text": post if post_provided else "N/A",
             "post_provided": post_provided,
-            "is_clickbait": "CLICKBAIT" if analysis_data["is_clickbait"] else "NOT CLICKBAIT",
+            "is_headline_clickbait": analysis_data["is_clickbait"],
             "clickbait_score": f"{analysis_data['clickbait_score']:.4f}",
+            "transformer_score": clickbait_content_score,
             "similarity_scores": analysis_data["similarity_scores"],
             "features": analysis_data["features"],
             "explanations": filtered_explanations,

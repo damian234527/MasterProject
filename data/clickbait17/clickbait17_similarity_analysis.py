@@ -136,7 +136,7 @@ def analyze_and_store_similarity(
 
 if __name__ == "__main__":
     # Define paths for the script.
-    dataset_csv_path = "models/default/clickbait17_train_features.csv"
+    dataset_csv_path = "models/default/clickbait17_train_features_original.csv"
     output_json_path = "similarity_statistics.json"
     clickbait_threshold = GENERAL_CONFIG.get("clickbait_threshold", 0.5)
 

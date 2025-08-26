@@ -141,6 +141,9 @@ class ExplanationGenerator:
         # Find which histogram bin the value falls into.
         bin_index = np.searchsorted(bin_edges, value, side='right')
 
+        if bin_index > len(cumulative_counts):
+            bin_index = len(cumulative_counts)
+
         # Calculate percentile based on the cumulative count of the bin.
         if bin_index == 0:
             percentile = 0
